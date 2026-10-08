@@ -49,6 +49,7 @@
       <Grid Grid.Row="4" Margin="0,8,0,0">
         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="124"/><ColumnDefinition Width="40"/></Grid.ColumnDefinitions>
         <TextBlock x:Name="PreferenceText" Text="Reading preferences" FontSize="11" Foreground="{StaticResource Muted}" VerticalAlignment="Center" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Margin="0,0,10,0"/>
+        <Button x:Name="SetupButton" Content="Set up SteamVR" Visibility="Collapsed" Click="Setup_Click" HorizontalAlignment="Left" Padding="10,6" FontSize="12" Background="#2C2D32" AutomationProperties.Name="Open SteamVR setup"/>
         <Button x:Name="ReleaseButton" Grid.Column="1" Content="Release inputs" Click="Release_Click" Padding="10,6" FontSize="12" Background="#2C2D32" AutomationProperties.Name="Emergency release all inputs"/>
         <Button x:Name="SettingsButton" Grid.Column="2" Content="⚙" FontFamily="Segoe UI Symbol" FontSize="19" Click="Settings_Click" Padding="0" Margin="8,0,0,0" Background="#2C2D32" AutomationProperties.Name="Open all settings" ToolTip="Settings"/>
       </Grid>

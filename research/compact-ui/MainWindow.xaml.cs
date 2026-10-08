@@ -35,6 +35,7 @@ public partial class MainWindow : Window
         _controller.StatusChanged += RenderStatus;
         _controller.ConnectionLost += RenderUnavailable;
         _controller.MessageChanged += text => { PreferenceText.ToolTip = text; };
+        _controller.SetupChanged += RenderSetup;
     }
     internal Task InitializeResidentAsync() => _controller.InitializeResidentAsync();
     internal void ShowPanel()
@@ -113,6 +114,13 @@ public partial class MainWindow : Window
     private async void Desktop_Click(object sender, RoutedEventArgs e) => await SwitchAsync("Desktop");
     private async void Release_Click(object sender, RoutedEventArgs e) { if (!_preview) await _controller.ReleaseFromFrontAsync(); }
     private void Settings_Click(object sender, RoutedEventArgs e) { if (!_preview) _controller.ShowSettings(this); }
+    private void Setup_Click(object sender, RoutedEventArgs e) { if (!_preview) _controller.ShowSetup(this); }
+    private void RenderSetup(SetupState state)
+    {
+        SetupButton.Visibility = state.ShowAction ? Visibility.Visible : Visibility.Collapsed;
+        PreferenceText.Visibility = state.ShowAction ? Visibility.Collapsed : Visibility.Visible;
+        SetupButton.ToolTip = state.Detail;
+    }
     private void FreeFbt_RequestNavigate(object sender, RequestNavigateEventArgs e)
     {
         e.Handled = true;
@@ -160,4 +168,5 @@ public partial class MainWindow : Window
     internal void SetPreviewDpi(double dpi) => _mascot.SetDpi(dpi);
     internal void SetPreviewFrame(Celebration celebration, int frame) => _mascot.SetFixtureFrame(celebration, frame);
     internal void SetPreviewTransition(bool toDesktop, int frame) => _scene.SetFixtureTransition(toDesktop, frame);
+    internal void SetPreviewSetup(bool needed) => _controller.SetPreviewSetup(needed);
 }

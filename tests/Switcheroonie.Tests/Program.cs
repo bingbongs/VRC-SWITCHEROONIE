@@ -194,6 +194,7 @@ Check(BinaryPrimitives.ReadInt32BigEndian(neutral1.AsSpan(neutral1.Length - 4)) 
 GameInputTests.Run(Check);
 SpinTests.Run(Check);
 GameCursorCaptureTests.Run(Check);
+GameWindowAuthorityTests.Run(Check);
 OwnedCursorVisibilityTests.Run(Check);
 StatePathsTests.Run(Check);
 CursorTests.Run(Check);

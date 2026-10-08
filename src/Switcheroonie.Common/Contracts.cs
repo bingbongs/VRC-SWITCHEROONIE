@@ -60,6 +60,11 @@ public sealed record HarnessStatus
     public bool GameInputActive { get; init; }
     public bool GameCursorCaptured { get; init; }
     public bool GameCursorHidden { get; init; }
+    public bool GameCursorSurfaceVisible { get; init; }
+    public bool GameCursorSurfaceOwnsPoint { get; init; }
+    public bool GameCursorInfoAvailable { get; init; }
+    public ulong GameCursorHideAttempts { get; init; }
+    public ulong GameCursorHideObserved { get; init; }
     public bool GameCursorWatchdogAlive { get; init; }
     public bool MenuNavigation { get; init; }
     public bool SpinEnabled { get; init; }

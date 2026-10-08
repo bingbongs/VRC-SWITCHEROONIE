@@ -13,6 +13,7 @@ public sealed class VersionStore
     sealed record Pending(string Version);
     sealed record HighWater(long Sequence);
     sealed record Transition(string Version, string? PreviousVersion, string Kind);
+    sealed record OriginSelection(string Version, long Sequence, string ManifestSha256);
     sealed record Bootstrap(string Directory, string? Version = null);
     public VersionStore(string root)
     {
@@ -27,8 +28,9 @@ public sealed class VersionStore
     internal static void AssertNoReparse(string path)
     {
         for (string? cursor = Path.GetFullPath(path); cursor is not null; cursor = Path.GetDirectoryName(cursor))
-            if ((File.Exists(cursor) || Directory.Exists(cursor)) && (File.GetAttributes(cursor) & FileAttributes.ReparsePoint) != 0)
-                throw new IOException("Update paths may not contain reparse points.");
+            if ((File.Exists(cursor) || Directory.Exists(cursor)) && (File.GetAttributes(cursor) & FileAttributes.ReparsePoint) != 0 &&
+                !UpdatePathPolicy.IsCloudDirectory(cursor))
+                throw new IOException("Update paths may not contain links or unknown reparse entries.");
     }
     T? ReadJson<T>(string name)
     {
@@ -230,12 +232,13 @@ public sealed class VersionStore
         if (pending is null) return new("Current", "No verified update is pending.");
         if (!safety.CanActivate()) return new("Deferred", "Downloaded; activation waits for normal app and SteamVR shutdown.", pending, true, true);
         var manifest = VerifyVersion(pending, trust); var previous = Current;
-        if (ReleaseTrust.ParseVersion(pending) <= ReleaseTrust.ParseVersion(previous?.Version ?? RememberedBootstrapVersion(trust) ?? trust.BaselineVersion))
+        bool originRepair = previous is null && ValidOriginSelection(pending, manifest, trust);
+        if (!originRepair && ReleaseTrust.ParseVersion(pending) <= ReleaseTrust.ParseVersion(previous?.Version ?? RememberedBootstrapVersion(trust) ?? trust.BaselineVersion))
             throw new InvalidDataException("Pending activation is a downgrade.");
         if (!safety.CanActivate()) return new("Deferred", "Application activity changed; update remains staged.", pending, true, true);
-        string rollbackVersion = previous?.Version ?? RememberedBootstrapVersion(trust) ?? trust.BaselineVersion;
-        VerifyVersion(rollbackVersion, trust);
-        var transition = new Transition(pending, rollbackVersion, "Activate");
+        string? rollbackVersion = originRepair ? null : previous?.Version ?? RememberedBootstrapVersion(trust) ?? trust.BaselineVersion;
+        if (rollbackVersion is not null) VerifyVersion(rollbackVersion, trust);
+        var transition = new Transition(pending, rollbackVersion, originRepair ? "Origin" : "Activate");
         WriteJson("transition.json", transition);
         return CompleteTransition(transition, trust, safety);
     }
@@ -254,8 +257,10 @@ public sealed class VersionStore
     }
     UpdateStatus CompleteTransition(Transition transition, ReleaseTrust trust, IUpdateSafety safety)
     {
-        if (transition.Kind is not "Activate" and not "Rollback") throw new InvalidDataException("Invalid update transition.");
+        if (transition.Kind is not "Activate" and not "Rollback" and not "Origin") throw new InvalidDataException("Invalid update transition.");
         var manifest = VerifyVersion(transition.Version, trust);
+        if (transition.Kind == "Origin" && (transition.PreviousVersion is not null || !ValidOriginSelection(transition.Version, manifest, trust)))
+            throw new InvalidDataException("Original driver repair receipt is invalid.");
         if (transition.PreviousVersion is string previous) VerifyVersion(previous, trust);
         if (!safety.CanActivate()) return new("Deferred", "Interrupted update waits for normal app and SteamVR shutdown.", transition.Version, true, true);
         var driver = safety.PrepareDriver(PayloadDirectory(transition.Version), manifest);
@@ -266,7 +271,32 @@ public sealed class VersionStore
         // Crash between commit and deletion is safe: the next launch verifies and repeats this exact transition.
         File.Delete(Path.Combine(Root, "pending.json"));
         File.Delete(Path.Combine(Root, "transition.json"));
-        return new(transition.Kind == "Activate" ? "Activated" : "RolledBack", "Matched signed portable version and owned driver selected.", transition.Version);
+        if (transition.Kind == "Origin") File.Delete(Path.Combine(Root, "origin-selection.json"));
+        return new(transition.Kind == "Rollback" ? "RolledBack" : "Activated", "Matched signed portable version and owned driver selected.", transition.Version);
+    }
+    public void QueueOriginActivation(ReleaseTrust trust)
+    {
+        if (Current is not null || TransitionPending || PendingVersion is not null) throw new IOException("Original activation is not available.");
+        string version = RememberedBootstrapVersion(trust) ?? throw new InvalidDataException("Original release is missing.");
+        var manifest = VerifyVersion(version, trust);
+        if (manifest.Sequence < HighestSequence) throw new InvalidDataException("Original activation cannot lower the signed high-water mark.");
+        var origin = ReadJson<Bootstrap>("bootstrap.json")!;
+        VerifyPayload(origin.Directory, manifest);
+        VerifyVersion(trust.BaselineVersion, trust);
+        WriteJson("highest.json", new HighWater(Math.Max(HighestSequence, manifest.Sequence)));
+        WriteJson("origin-selection.json", new OriginSelection(version, manifest.Sequence, ReceiptHash(version)));
+        WriteJson("pending.json", new Pending(version));
+    }
+    string ReceiptHash(string version) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+        ReadBounded(Path.Combine(VersionDirectory(version), "release-manifest.json"), ManifestVerifier.MaxManifestBytes)));
+    bool ValidOriginSelection(string version, ReleaseManifest manifest, ReleaseTrust trust)
+    {
+        var selection = ReadJson<OriginSelection>("origin-selection.json");
+        if (selection is null || selection.Version != version || selection.Sequence != manifest.Sequence || selection.Sequence < HighestSequence ||
+            selection.ManifestSha256 != ReceiptHash(version) || RememberedBootstrapVersion(trust) != version) return false;
+        var origin = ReadJson<Bootstrap>("bootstrap.json")!;
+        VerifyPayload(origin.Directory, manifest); VerifyVersion(trust.BaselineVersion, trust);
+        return true;
     }
     public void RememberBootstrap(string directory, string version = ReleaseTrust.BootstrapVersion)
     {
@@ -301,6 +331,37 @@ public sealed class VersionStore
         if (ReleaseTrust.ParseVersion(version) < ReleaseTrust.ParseVersion(trust.BaselineVersion))
             throw new InvalidDataException("Original portable version is below the delivery floor.");
         return version;
+    }
+    public bool RequiresOriginPreparation(string deliveryDirectory, ReleaseTrust trust)
+    {
+        if (Current is not null) return false;
+        var origin = ReadJson<Bootstrap>("bootstrap.json");
+        if (origin is null) return false;
+        ValidateBootstrap(origin, trust.BaselineVersion);
+        return !origin.Directory.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(deliveryDirectory)), StringComparison.OrdinalIgnoreCase);
+    }
+    public string ResolveBootstrapUi(string deliveryDirectory, ReleaseTrust trust, string deliveryVersion)
+    {
+        ReleaseTrust.ParseVersion(deliveryVersion);
+        string directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(deliveryDirectory));
+        AssertNoReparse(directory);
+        var origin = ReadJson<Bootstrap>("bootstrap.json");
+        if (origin is null)
+            return Path.Combine(directory, "Switcheroonie.UI.exe");
+        string version = ValidateBootstrap(origin, trust.BaselineVersion);
+        if (ReleaseTrust.ParseVersion(version) < ReleaseTrust.ParseVersion(trust.BaselineVersion))
+            throw new InvalidDataException("Original portable version is below the delivery floor.");
+        if (origin.Directory.Equals(directory, StringComparison.OrdinalIgnoreCase))
+        {
+            if (version != deliveryVersion)
+                throw new InvalidDataException("Remembered original release does not match the compiled delivery.");
+            return Path.Combine(directory, "Switcheroonie.UI.exe");
+        }
+        // A newly downloaded folder cannot bypass the recorded running version
+        // while its driver transition is still pending. Retain the signed origin.
+        var manifest = VerifyVersion(version, trust);
+        VerifyPayload(origin.Directory, manifest);
+        return Path.Combine(origin.Directory, "Switcheroonie.UI.exe");
     }
     public string? ResolveStableLauncher(string uiDirectory, ReleaseTrust trust)
     {

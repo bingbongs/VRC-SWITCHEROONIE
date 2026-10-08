@@ -9,18 +9,19 @@ A small Windows app for switching an existing SteamVR VRChat session between you
 
 ## Download and start
 
-1. Download the Windows x64 ZIP from [Releases](https://github.com/bingbongs/VRC-SWITCHEROONIE/releases).
-2. Extract the whole ZIP into a folder you can write to. Run **VRC-SWITCHEROONIE.exe**.
-3. For first setup, close VRChat and SteamVR normally. Register the included experimental driver:
+[**Download VRC-SWITCHEROONIE for Windows**](https://github.com/bingbongs/VRC-SWITCHEROONIE/releases/latest/download/VRC-SWITCHEROONIE-Portable.zip)
 
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Manage-Driver.ps1 -Action Install -EnableExperimental
-   ```
+1. Extract the ZIP. Double-click **VRC-SWITCHEROONIE.exe**.
+2. If **Set up SteamVR** appears, close VRChat and SteamVR normally, then click the setup button in Settings. No terminal commands or administrator prompt.
+3. Connect your PCVR app, launch SteamVR through it, then launch VRChat in VR. Choose **Desktop** in SWITCHEROONIE and click into VRChat. Choose **VR** to switch back.
 
-4. Connect Virtual Desktop, use **Launch SteamVR**, wake the controllers, then launch VRChat in VR.
-5. Choose **Desktop** in SWITCHEROONIE and click into VRChat. Choose **VR** to return to physical tracking.
+The download has one app EXE and an **App** folder. Keep them together. All app dependencies, including the .NET runtime and native libraries, are bundled: no .NET, Visual Studio or C++ runtime installation is needed. SteamVR, VRChat and your usual PCVR connection must already be available.
 
-The portable package includes its .NET runtime. Closing the panel keeps it in the tray. **Start with Windows** opens it quietly at sign-in. Updates download in the background and wait for a safe stopped session before replacing the driver; they do not require an installer or restart your game.
+For full-body tracking, turn off **Freeze Tracking on Disconnect** in VRChat's Tracking & IK settings. Otherwise VRChat can keep your last tracked body pose when Desktop suspends the trackers. SWITCHEROONIE leaves your VRChat settings under your control.
+
+![First setup](docs/screenshots/setup.png)
+
+Closing the panel keeps it in the tray. **Start with Windows** opens it quietly at sign-in. Updates download automatically and activate after normal app/VRChat/SteamVR shutdown. No installer or forced game restart.
 
 The driver currently accepts SteamVR build **25330290**. Other builds refuse activation until reviewed. See [compatibility](docs/compatibility.md) and [recovery](docs/recovery.md).
 
@@ -57,9 +58,9 @@ Enable **speeeeeeen** below Credits in Settings. The choice is remembered; motio
 
 Rotation builds speed while held and slows down after release. The opposite direction brakes faster. Num Lock can be on or off. Controls work in VR and Desktop while VRChat is foreground; typing, focus loss and emergency release stop motion.
 
-**May cause motion sickness.** Start slowly. The feature rotates the tracked head, controllers and generic trackers together around a body pivot. Avatar behavior depends on VRChat's IK and is experimental; it does not change avatar files or calibration.
+**May cause motion sickness.** Start slowly. In Desktop, spinning rotates the held view, controllers and generic body trackers around a body pivot. In VR, it rotates the hands/body while your headset keeps its natural physical view. Avatar behavior depends on VRChat's IK and is experimental; it does not change avatar files or calibration.
 
-Desktop suspends SteamVR generic body trackers so VRChat can use its non-FBT animation; VR restores their physical poses. Full-body fallback and restoration are still awaiting the repaired build's live check. OSC-only body trackers sent directly to VRChat need a separate sender/relay path.
+Desktop suspends SteamVR generic body trackers so VRChat can use its non-FBT animation; VR restores their physical poses. On the PICO Swan / Virtual Desktop route, the user confirmed both fallback and restoration after disabling VRChat's freeze setting. Cursor hiding, wrist aiming and VRChat's locomotion animation after switching still need repairs/live verification. OSC-only body trackers sent directly to VRChat need a separate sender/relay path.
 
 ![Help and credits](docs/screenshots/help.png)
 ![speeeeeeen](docs/screenshots/spin.png)
@@ -67,6 +68,8 @@ Desktop suspends SteamVR generic body trackers so VRChat can use its non-FBT ani
 ## Updates
 
 [GitHub Releases](https://github.com/bingbongs/VRC-SWITCHEROONIE/releases) hosts the update files. The updater verifies a signed manifest and every packaged file, stages each version separately, and retains the previous version for recovery. It never replaces a loaded driver or closes VRChat, SteamVR, or Virtual Desktop. See [update details](docs/updates.md).
+
+Use **VRC-SWITCHEROONIE-Portable.zip** for the simple download. The versioned win-x64 ZIP and manifest/signature are also retained for existing automatic updaters.
 
 ## Build
 

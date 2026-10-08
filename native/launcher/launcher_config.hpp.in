@@ -1,0 +1,6 @@
+#pragma once
+inline constexpr char ExpectedInnerSha256[] = "@SWITCHEROONIE_INNER_SHA256@";
+static_assert(sizeof(ExpectedInnerSha256) == 65);
+struct PayloadPin { const wchar_t *path; const char *sha256; };
+inline constexpr PayloadPin ExpectedPayload[] = {
+@payload_pins@};

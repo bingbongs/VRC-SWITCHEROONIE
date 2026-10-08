@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Text;
 using Switcheroonie;
 
 namespace Switcheroonie.Broker;
@@ -15,6 +14,7 @@ public sealed class WindowsGameInput : IGameInputPlatform
     readonly HookProcedure hookProcedure;
     readonly KeyboardPressTracker keyPresses = new();
     readonly int session = Process.GetCurrentProcess().SessionId;
+    readonly GameWindowAuthorityCache windowAuthority;
     volatile bool disposed, initialized, eligibleScope, active, typing, spinEnabled, lookRequested;
     LookCursorSurface? lookSurface;
     readonly bool[] numpad = new bool[10];
@@ -40,6 +40,11 @@ public sealed class WindowsGameInput : IGameInputPlatform
     public string? InitializationError => Volatile.Read(ref initializationError);
     public bool CursorWatchdogAlive { get { lock (gate) return cursorMap?.HelperAlive == true; } }
     public bool CaptureActive { get { lock (gate) return cursorCapture.Owned; } }
+    public bool GameCursorSurfaceVisible { get { lock (gate) return lookSurface?.SurfaceVisible == true; } }
+    public bool GameCursorSurfaceOwnsPoint { get { lock (gate) return lookSurface?.OwnsPointObserved == true; } }
+    public bool GameCursorInfoAvailable { get { lock (gate) return lookSurface?.CursorInfoAvailable == true; } }
+    public ulong GameCursorHideAttempts { get { lock (gate) return lookSurface?.HideAttempts ?? 0; } }
+    public ulong GameCursorHideObserved { get { lock (gate) return lookSurface?.HideObserved ?? 0; } }
     public bool CursorHidden
     {
         get
@@ -48,13 +53,14 @@ public sealed class WindowsGameInput : IGameInputPlatform
             {
                 if (!lookRequested || !cursorCapture.Owned || !ScopeFresh()) return false;
                 var info = new CursorNative.CursorInfo { Size = (uint)Marshal.SizeOf<CursorNative.CursorInfo>() };
-                return CursorNative.GetCursorInfo(ref info) && (info.Flags & 1) == 0;
+                return CursorNative.GetCursorInfo(ref info) && (lookSurface?.IsInvisibleShape(info) == true || info.Cursor == IntPtr.Zero && (info.Flags & 1) == 0);
             }
         }
     }
 
     public WindowsGameInput()
     {
+        windowAuthority = new(new ProcessWindowAuthority(session), Stopwatch.Frequency);
         cursorCapture = new(new CaptureOperations(this), PublishCaptureLease);
         windowProcedure = WindowProc; hookProcedure = KeyboardProc;
         thread = new Thread(MessageLoop) { IsBackground = true, Name = "Switcheroonie raw input" };
@@ -178,6 +184,7 @@ public sealed class WindowsGameInput : IGameInputPlatform
     }
     void InvalidateScope()
     {
+        windowAuthority.Reset();
         Volatile.Write(ref scopeStamp, 0); Volatile.Write(ref scopeWindow, 0); Volatile.Write(ref scopePid, 0);
         Interlocked.Exchange(ref deltaX, 0); Interlocked.Exchange(ref deltaY, 0); Interlocked.Exchange(ref activationClick, 0);
         Volatile.Write(ref activationWindow, 0); Volatile.Write(ref activationPid, 0); Volatile.Write(ref activationStamp, 0);
@@ -191,18 +198,14 @@ public sealed class WindowsGameInput : IGameInputPlatform
         return !disposed && stamp > 0 && Stopwatch.GetElapsedTime(stamp).TotalMilliseconds is >= 0 and <= 100 && window != 0 &&
             CursorNative.GetForegroundWindow().ToInt64() == window && CursorNative.GetWindowThreadProcessId(new IntPtr(window), out uint pid) != 0 && pid == (uint)Volatile.Read(ref scopePid);
     }
-    bool ValidateGameWindow(out IntPtr window, out uint pid, out CursorNative.Rect rectangle)
+    unsafe bool ValidateGameWindow(out IntPtr window, out uint pid, out CursorNative.Rect rectangle)
     {
         window = CursorNative.GetForegroundWindow(); pid = 0; rectangle = default;
         if (window == IntPtr.Zero || !IsWindowVisible(window) || IsIconic(window) || CursorNative.GetWindowThreadProcessId(window, out pid) == 0) return false;
-        try
-        {
-            using var process = Process.GetProcessById((int)pid);
-            if (!process.ProcessName.Equals("VRChat", StringComparison.OrdinalIgnoreCase) || process.SessionId != session || process.MainWindowHandle != window) return false;
-            var className = new StringBuilder(64);
-            if (GetClassName(window, className, className.Capacity) == 0 || !className.ToString().Equals("UnityWndClass", StringComparison.Ordinal)) return false;
-        }
-        catch (Exception e) when (e is ArgumentException or InvalidOperationException or Win32Exception) { return false; }
+        char* className = stackalloc char[64];
+        int length = GetClassName(window, className, 64);
+        if (length <= 0 || !new ReadOnlySpan<char>(className, length).SequenceEqual("UnityWndClass") ||
+            !windowAuthority.Validate(window.ToInt64(), pid, Stopwatch.GetTimestamp())) return false;
         if (!GetClientRect(window, out var client) || !CursorNative.ValidRect(client) || client.Right - client.Left < 64 || client.Bottom - client.Top < 64) return false;
         var first = new CursorNative.Point { X = client.Left, Y = client.Top };
         var last = new CursorNative.Point { X = client.Right, Y = client.Bottom };
@@ -393,7 +396,7 @@ public sealed class WindowsGameInput : IGameInputPlatform
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr window);
     [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr window, out CursorNative.Rect rectangle);
     [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr window, ref CursorNative.Point point);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr window, StringBuilder value, int size);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern unsafe int GetClassName(IntPtr window, char* value, int size);
     [DllImport("user32.dll")] static extern uint GetRawInputData(IntPtr raw, uint command, IntPtr data, ref uint size, uint headerSize);
     [DllImport("user32.dll", SetLastError = true)] static extern bool RegisterRawInputDevices(RawDevice[] devices, uint count, uint size);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr GetModuleHandle(string? name);
@@ -410,6 +413,80 @@ public sealed class WindowsGameInput : IGameInputPlatform
     [DllImport("user32.dll", SetLastError = true)] static extern IntPtr SetWindowsHookEx(int type, HookProcedure callback, IntPtr module, uint thread);
     [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hook);
     [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+}
+
+// A retained process handle pins identity; foreground/PID/class/geometry remain
+// authenticated in the adapter on every read. Full main-window enumeration is
+// bounded to scope acquisition and a 500 ms refresh, never every mouse frame.
+internal sealed class GameWindowAuthorityCache(GameWindowAuthorityCache.IOperations operations, long frequency)
+{
+    internal interface IOperations
+    {
+        bool Acquire(long window, uint pid, out long identity);
+        bool Alive(uint pid, long identity);
+        bool Refresh(long window, uint pid, long identity);
+        void Release();
+    }
+    long window, identity, checkedAt;
+    uint pid;
+    internal bool Validate(long candidateWindow, uint candidatePid, long now)
+    {
+        if (candidateWindow == 0 || candidatePid == 0 || now <= 0 || frequency <= 0)
+        { Reset(); return false; }
+        if (candidateWindow != window || candidatePid != pid)
+        {
+            Reset();
+            if (!operations.Acquire(candidateWindow, candidatePid, out long acquired) || acquired <= 0)
+            { Reset(); return false; }
+            window = candidateWindow; pid = candidatePid; identity = acquired; checkedAt = now;
+        }
+        if (now < checkedAt || !operations.Alive(pid, identity)) { Reset(); return false; }
+        if (now - checkedAt >= Math.Max(1, frequency / 2))
+        {
+            if (!operations.Refresh(window, pid, identity)) { Reset(); return false; }
+            checkedAt = now;
+        }
+        return true;
+    }
+    internal void Reset() { operations.Release(); window = identity = checkedAt = 0; pid = 0; }
+}
+
+internal sealed class ProcessWindowAuthority(int session) : GameWindowAuthorityCache.IOperations
+{
+    Process? process;
+    long identity;
+    public bool Acquire(long window, uint pid, out long acquired)
+    {
+        acquired = 0; Release();
+        try
+        {
+            process = Process.GetProcessById(checked((int)pid));
+            _ = process.SafeHandle; // Retain the exact process before querying its metadata.
+            identity = process.StartTime.ToUniversalTime().Ticks;
+            if (process.HasExited || !process.ProcessName.Equals("VRChat", StringComparison.OrdinalIgnoreCase) ||
+                process.SessionId != session || process.MainWindowHandle.ToInt64() != window || process.HasExited)
+            { Release(); return false; }
+            acquired = identity; return true;
+        }
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException or Win32Exception or OverflowException)
+        { Release(); return false; }
+    }
+    public bool Alive(uint pid, long expected)
+    {
+        try { return process is not null && process.Id == pid && identity == expected && !process.HasExited; }
+        catch (Exception e) when (e is InvalidOperationException or Win32Exception) { return false; }
+    }
+    public bool Refresh(long window, uint pid, long expected)
+    {
+        if (!Alive(pid, expected)) return false;
+        try
+        {
+            process!.Refresh();
+            return process.StartTime.ToUniversalTime().Ticks == expected && process.MainWindowHandle.ToInt64() == window && Alive(pid, expected);
+        }
+        catch (Exception e) when (e is InvalidOperationException or Win32Exception) { return false; }
+    }
+    public void Release() { process?.Dispose(); process = null; identity = 0; }
 }
 
 // Used only by the input thread. No typed text or general keyboard history is stored.

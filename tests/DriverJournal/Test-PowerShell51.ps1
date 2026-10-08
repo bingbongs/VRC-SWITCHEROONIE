@@ -5,7 +5,7 @@ $scriptPath = Join-Path $RepositoryRoot 'tools/Manage-Driver.ps1'
 $tokens = $null; $parseErrors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors.Count) { throw 'Installer script did not parse in Windows PowerShell 5.1.' }
-$functionNames = @('Read-ConfigText','Convert-JournalConfigText','Read-Journal','Save-Journal','Write-DriverConfig','Restore-DriverConfig')
+$functionNames = @('Read-ConfigText','Convert-JournalConfigText','Read-Journal','Get-JournalSerializedText','Save-Journal','Write-DriverConfig','Restore-DriverConfig')
 foreach ($name in $functionNames) {
     $function = $ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name}, $true)
     if ($null -eq $function) { throw "Missing installer function $name" }
@@ -19,6 +19,8 @@ $driverConfig = Join-Path $sandbox 'driver.json'
 $journalPath = Join-Path $sandbox 'installation-journal.json'
 $results = New-Object 'System.Collections.Generic.List[object]'
 $exitCode = 0
+# The extracted config functions call this injected guard, never the host inventory.
+function Assert-SetupStopped { }
 function Assert([bool]$Condition, [string]$Name) {
     $results.Add([pscustomobject]@{name=$Name;passed=$Condition})
     if (!$Condition) { throw "FAILED: $Name" }

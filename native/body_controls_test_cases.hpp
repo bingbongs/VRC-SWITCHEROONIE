@@ -145,14 +145,24 @@ void BodyControlsChecks()
             for (uint32_t i=0;i<4;++i)
             {
                 bool spun=false;
-                Check(router.RoutePose(i,request,true,now,frequency,after,&spun)&&spun,
-                      "leased spin routes each eligible head, hand and body tracker in both source modes");
+                after=baseline[i];
+                const bool routed=router.RoutePose(i,request,true,now,frequency,after,&spun);
+                if(!mode&&i==0)
+                    Check(!routed&&!spun&&SamePose(after,baseline[i]),
+                          "Physical spin leaves the full HMD pose byte-identical for vendor passthrough");
+                else
+                    Check(routed&&spun,"leased spin routes the body in both modes and the held head only in Desktop");
                 before[i]=TestWorldPosition(baseline[i]);
                 transformed[i]=TestWorldPosition(after);
                 const auto delta=MatrixRotate(turn,{before[i].x-pivot.x,before[i].y-pivot.y,before[i].z-pivot.z});
-                Check(SameVector(transformed[i],{pivot.x+delta.x,pivot.y+delta.y,pivot.z+delta.z})&&
-                      SameRotation(TestWorldRotation(after),Multiply(turn,TestWorldRotation(baseline[i]))),
-                      "independent matrix oracle verifies full WORLD position and orientation around the shared pivot");
+                if(mode||i!=0)
+                    Check(SameVector(transformed[i],{pivot.x+delta.x,pivot.y+delta.y,pivot.z+delta.z})&&
+                          SameRotation(TestWorldRotation(after),Multiply(turn,TestWorldRotation(baseline[i]))),
+                          "independent matrix oracle verifies selected WORLD position and orientation around the shared pivot");
+                else
+                    Check(SameVector(transformed[i],before[i])&&
+                          SameRotation(TestWorldRotation(after),TestWorldRotation(baseline[i])),
+                          "Physical viewer WORLD position and orientation do not follow the spin quaternion");
                 sw::PoseSnapshot captured{};
                 Check(router.Physical(i,captured)&&std::memcmp(&captured.pose,&original[i],sizeof(original[i]))==0,
                       "spin never overwrites independently captured raw physical poses or derivatives");
@@ -162,15 +172,15 @@ void BodyControlsChecks()
                           SameRotation(after.qDriverFromHeadRotation,original[i].qDriverFromHeadRotation),
                           "outer transform preserves physical driver-local head offsets and velocity coordinates");
             }
-            for(uint32_t i=0;i<4;++i)
+            for(uint32_t i=mode?0u:1u;i<4;++i)
                 for(uint32_t j=i+1;j<4;++j)
                     Check(Near(DistanceSquared(before[i],before[j]),DistanceSquared(transformed[i],transformed[j])),
-                          "whole tracked-body spin preserves every inter-device distance");
+                          "spin preserves distances between every selected body member, including the held Desktop head");
             Check(!router.RoutePose(4,request,true,now,frequency,after),"tracking-reference devices remain completely untransformed");
         }
     }
     request.requestedMode=0;++request.epoch;request.armed=0;
-    Check(router.RoutePose(0,request,true,now,frequency,after),"separately leased physical spin does not depend on desktop pointer arming");
+    Check(router.RoutePose(1,request,true,now,frequency,after),"separately leased physical body spin does not depend on desktop pointer arming");
     router.CountBodySpin(request.bodySpinGeneration);
     auto status=router.GetStatus(request,true,now,frequency);
     Check(status.bodySpinActive&&status.bodySpinGeneration==request.bodySpinGeneration&&
@@ -191,11 +201,11 @@ void BodyControlsChecks()
         case 6: invalid.bodySpinReserved=1;break;
         }
         Check(!sw::Router::ValidRequest(invalid,now,frequency,error)&&
-              !router.RoutePose(0,invalid,true,now,frequency,after),"malformed body-spin requests fail closed before any transform");
+              !router.RoutePose(3,invalid,true,now,frequency,after),"malformed body-spin requests fail closed before any body transform");
     }
-    Check(!router.RoutePose(0,request,false,now,frequency,after),"unreadable broker data cannot authorize any physical spin");
+    Check(!router.RoutePose(3,request,false,now,frequency,after),"unreadable broker data cannot authorize any physical body spin");
     request.timestamp=now+201000;
-    Check(!router.RoutePose(0,request,true,request.timestamp,frequency,after)&&
+    Check(!router.RoutePose(3,request,true,request.timestamp,frequency,after)&&
           !router.GetStatus(request,true,request.timestamp,frequency).bodySpinActive,
           "separate spin lease expires at200ms despite a refreshed broker heartbeat");
     request.bodySpinLeaseQpc=request.timestamp;
@@ -252,4 +262,55 @@ void BodyControlsChecks()
     Check(sw::ReadBlock(block,roundtrip)&&roundtrip.bodySpinGeneration==request.bodySpinGeneration&&
           roundtrip.bodySpinLeaseQpc==request.bodySpinLeaseQpc&&roundtrip.bodySpinPivot[1]==.95,
           "extended quaternion/pivot/lease share the existing bounded atomic512-byte request transaction");
+}
+
+void PhysicalHeadViewChecks()
+{
+    constexpr int64_t now=55000000, frequency=1000000;
+    sw::Router router;
+    for(uint32_t index=0;index<4;++index)
+    {
+        router.SetRole(index,index==0?sw::DeviceRole::Head:index==1?sw::DeviceRole::Left:
+                       index==2?sw::DeviceRole::Right:sw::DeviceRole::Other,100+index);
+        router.SetBodySpinEligible(index,true);router.SetGenericTracker(index,index==3);
+        router.Capture(index,Pose(index),now);
+    }
+    sw::Request request;request.epoch=1;request.bodySpinActive=1;request.bodySpinGeneration=100;
+    request.bodySpinPivot[0]=.2;request.bodySpinPivot[1]=.9;request.bodySpinPivot[2]=-.3;
+    for(int sample=0;sample<24;++sample)
+    {
+        const auto time=now+sample*1000;
+        request.timestamp=request.bodySpinLeaseQpc=time;
+        auto head=Pose(.02*sample,1.7+.01*sample,-.03*sample);
+        head.qRotation=Multiply({std::cos(.03*sample),0,std::sin(.03*sample),0},
+                               {std::cos(.02*sample),std::sin(.02*sample),0,0});
+        head.qWorldFromDriverRotation={std::cos(.12),0,0,std::sin(.12)};
+        head.qDriverFromHeadRotation={std::cos(.05),0,std::sin(.05),0};
+        head.vecWorldFromDriverTranslation[0]=4;head.vecWorldFromDriverTranslation[1]=.2;
+        head.vecDriverFromHeadTranslation[0]=.02;head.vecDriverFromHeadTranslation[2]=-.04;
+        head.poseTimeOffset=-.013;head.vecVelocity[0]=sample*.1;
+        head.vecAcceleration[2]=-.3;head.vecAngularVelocity[1]=.7;
+        head.vecAngularAcceleration[0]=-.2;head.willDriftInYaw=true;
+        for(uint32_t index=0;index<4;++index) router.Capture(index,index==0?head:Pose(index),time);
+        const auto turn=Multiply({std::cos(.1*sample),std::sin(.1*sample),0,0},
+                                 {std::cos(.07*sample),0,0,std::sin(.07*sample)});
+        request.bodySpinQuaternion[0]=turn.w;request.bodySpinQuaternion[1]=turn.x;
+        request.bodySpinQuaternion[2]=turn.y;request.bodySpinQuaternion[3]=turn.z;
+        auto output=head;bool applied=true;
+        Check(!router.RoutePose(0,request,true,time,frequency,output,&applied)&&!applied&&SamePose(output,head),
+              "changing Physical head positions, outer calibration, head offsets and prediction pass through byte-identical during body spin");
+        sw::PoseSnapshot original{};
+        Check(router.Physical(0,original)&&SamePose(original.pose,head)&&
+              router.RoutePose(3,request,true,time,frequency,output,&applied)&&applied,
+              "natural Physical head movement stays independent while a fresh complete body continues rotating");
+    }
+    request.requestedMode=1;++request.epoch;
+    vr::DriverPose_t desktop{};bool applied=false;
+    Check(router.RoutePose(0,request,true,request.timestamp,frequency,desktop,&applied)&&applied,
+          "the same leased turn rotates the held Desktop HMD view after a mode transaction");
+    request.requestedMode=0;++request.epoch;
+    auto sentinel=Pose(123);
+    auto output=sentinel;applied=true;
+    Check(!router.RoutePose(0,request,true,request.timestamp,frequency,output,&applied)&&!applied&&SamePose(output,sentinel),
+          "return to Physical releases HMD routing even with a continuing body-spin generation");
 }

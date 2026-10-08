@@ -138,6 +138,11 @@ try {
                 armed = Get-Boolean $taskStatus.Armed; gameEnabled = Get-Boolean $taskStatus.GameInputEnabled
                 gameActive = Get-Boolean $taskStatus.GameInputActive; cursorCaptured = Get-Boolean $taskStatus.GameCursorCaptured
                 cursorHidden = Get-Boolean $taskStatus.GameCursorHidden
+                cursorSurfaceVisible = Get-Boolean $taskStatus.GameCursorSurfaceVisible
+                cursorSurfaceOwnsPoint = Get-Boolean $taskStatus.GameCursorSurfaceOwnsPoint
+                cursorInfoAvailable = Get-Boolean $taskStatus.GameCursorInfoAvailable
+                cursorHideAttempts = Get-Unsigned $taskStatus.GameCursorHideAttempts
+                cursorHideObserved = Get-Unsigned $taskStatus.GameCursorHideObserved
                 cursorWatchdogAlive = Get-Boolean $taskStatus.GameCursorWatchdogAlive; menuNavigation = Get-Boolean $taskStatus.MenuNavigation
                 automaticEnabled = Get-Boolean $taskStatus.AutomaticEnabled; manualMode = Get-AllowedLabel $taskStatus.ManualMode @('Desktop', 'Physical')
                 headsetWornKnown = Get-Boolean $taskStatus.HeadsetWornKnown; headsetWorn = Get-Boolean $taskStatus.HeadsetWorn

@@ -79,6 +79,7 @@ public sealed class DriverTransition
         AssertCompanion(Path.Combine(payload, "driver", "driver.vrdrivermanifest"));
         var files = manifest.Files.Where(x => x.Path.StartsWith("driver/", StringComparison.Ordinal)).ToArray();
         if (files.Length == 0) throw new InvalidDataException("Signed release contains no companion driver.");
+        WindowsUpdateSafety.DriverInventoryNeedsRepair(Path.Combine(payload, "driver"), installed);
         var backup = new List<BackupFile>();
         foreach (var item in files)
         {

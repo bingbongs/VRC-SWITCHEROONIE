@@ -1,5 +1,5 @@
-param([switch]$SkipTests, [switch]$FrameworkDependent, [string]$PackageName = 'VRC-SWITCHEROONIE-0.2.2',
-    [string]$NativeBuildDirectory = 'build/native-release-0.2.2')
+param([switch]$SkipTests, [switch]$FrameworkDependent, [string]$PackageName = 'VRC-SWITCHEROONIE-0.2.3',
+    [string]$NativeBuildDirectory = 'build/native-release-0.2.3')
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $nativeBuild = [IO.Path]::GetFullPath((Join-Path $repo $NativeBuildDirectory))
@@ -50,6 +50,8 @@ if (-not $SkipTests) {
     $suites += Run-Suite 'Windows PowerShell installer journal recovery' $windowsPowerShell @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $repo 'tests\DriverJournal\Test-PowerShell51.ps1'))
     $suites += Run-Suite 'Owned installer relocation and rollback' $windowsPowerShell @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $repo 'tests\DriverJournal\Test-Relocation.ps1'))
     $suites += Run-Suite 'Canonical profile configuration and installer ownership' $windowsPowerShell @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $repo 'tests\DriverJournal\Test-CanonicalState.ps1'))
+    $suites += Run-Suite 'Installer runtime guards and exclusive first-run setup' $windowsPowerShell @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $repo 'tests\DriverJournal\Test-ProcessGuard.ps1'))
+    $suites += Run-Suite 'Standalone archive complete payload and tamper rejection' $windowsPowerShell @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $repo 'tests\StandaloneArchive\Test-Archive.ps1'))
     $suites += Run-Suite 'Signed portable updater malicious archive and rollback fixtures' 'dotnet' @('run','--project',(Join-Path $repo 'tests\Switcheroonie.Update.Tests\Switcheroonie.Update.Tests.csproj'),'-c','Release')
     [pscustomobject]@{schemaVersion=1;dateUtc=[DateTime]::UtcNow.ToString('o');category='Software automated + isolated simulated runtime; no hardware certification';suites=$suites;physicalTests='Not run for this candidate';coldStart='Resident service implemented; persistent-HMD VD trials failed and were rolled back; graphics bridge unimplemented';runtimeMutationsDuringTests=$false} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $repo 'reports\software-validation.json') -Encoding UTF8
 }
@@ -88,11 +90,31 @@ Copy-Item -LiteralPath (Join-Path $repo 'third_party\minhook\LICENSE.txt') -Dest
 Copy-Item -LiteralPath (Join-Path $package 'Switcheroonie.Updater.exe') -Destination (Join-Path $package 'VRC-SWITCHEROONIE.exe') -Force
 Set-Content -LiteralPath (Join-Path $package 'VRC-SWITCHEROONIE.cmd') -Value '@echo off
 start "" "%~dp0VRC-SWITCHEROONIE.exe" --launch' -Encoding ASCII
+$launcherBuild = Join-Path $repo ("build\standalone-launcher-" + $PackageName)
+$innerHash = (Get-FileHash -LiteralPath (Join-Path $package 'VRC-SWITCHEROONIE.exe') -Algorithm SHA256).Hash
+New-Item -ItemType Directory -Force -Path $launcherBuild | Out-Null
+$launcherInventory = Join-Path $launcherBuild 'payload-inventory.txt'
+Get-ChildItem -LiteralPath $package -File -Recurse | Sort-Object FullName | ForEach-Object {
+    $relative = $_.FullName.Substring($package.Length + 1).Replace('\','/')
+    if ($relative.Contains('|') -or $relative.Contains("`n") -or $relative.Contains("`r")) { throw 'Invalid launcher inventory path.' }
+    (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash + '|' + $relative
+} | Set-Content -LiteralPath $launcherInventory -Encoding UTF8
+Run-Native 'cmake' @('-S',(Join-Path $repo 'native\launcher'),'-B',$launcherBuild,'-G','Visual Studio 17 2022','-A','x64',('-DSWITCHEROONIE_INNER_SHA256=' + $innerHash),('-DSWITCHEROONIE_PAYLOAD_INVENTORY=' + $launcherInventory))
+Run-Native 'cmake' @('--build',$launcherBuild,'--config','Release','--parallel','2')
+New-Item -ItemType Directory -Path (Join-Path $package 'portable') | Out-Null
+Copy-Item -LiteralPath (Join-Path $launcherBuild 'Release\VRC-SWITCHEROONIE.exe') -Destination (Join-Path $package 'portable\VRC-SWITCHEROONIE.exe')
+if (-not $SkipTests) {
+    & (Join-Path $PSScriptRoot '..\tests\StandaloneLauncher\Test-Launcher.ps1') -LaunchFixture
+    if ($LASTEXITCODE -ne 0) { throw 'Standalone launcher fixtures failed.' }
+}
 $hashes = Get-ChildItem -LiteralPath $package -File -Recurse | ForEach-Object {
     [pscustomobject]@{path=$_.FullName.Substring($package.Length+1);sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
 }
 $hashes | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $package 'package-hashes.json') -Encoding UTF8
 $zip = Join-Path (Join-Path $repo 'dist') ($PackageName + '-win-x64.zip')
 Compress-Archive -LiteralPath $package -DestinationPath $zip -Force
+$portableZip = Join-Path (Join-Path $repo 'dist') ($PackageName + '-portable.zip')
+& (Join-Path $PSScriptRoot 'New-StandaloneArchive.ps1') -Package $package -Output $portableZip
 Write-Host "Package: $package"
 Write-Host "Archive: $zip"
+Write-Host "Standalone download: $portableZip"

@@ -10,14 +10,24 @@ public sealed class UpdateService : IDisposable
     readonly VersionStore store;
     readonly HttpClient http;
     readonly IUpdateSafety safety;
+    readonly string deliveryVersion;
     public UpdateService(string? storeRoot = null, ReleaseTrust? trust = null,
-        HttpMessageHandler? handler = null, IUpdateSafety? safety = null)
+        HttpMessageHandler? handler = null, IUpdateSafety? safety = null, string? fixtureDeliveryVersion = null)
     {
+        // The shipped launcher has no external version override. A fixture must
+        // supply every boundary and a nonproduction repository before substituting
+        // its fake compiled release; no CLI or production trust path accepts it.
+        if (fixtureDeliveryVersion is not null && (storeRoot is null || trust is null || handler is null || safety is null ||
+            trust.Repository.Equals(ReleaseTrust.ProductionRepository, StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException("A delivery-version fixture requires isolated, nonproduction dependencies.");
+        var compiled = typeof(UpdateService).Assembly.GetName().Version ?? throw new InvalidDataException("Compiled release version is unavailable.");
+        deliveryVersion = fixtureDeliveryVersion ?? $"{compiled.Major}.{compiled.Minor}.{compiled.Build}";
+        ReleaseTrust.ParseVersion(deliveryVersion);
         this.trust = trust;
         store = new(storeRoot ?? Path.Combine(StatePaths.Current.DataDirectory, "updates"));
         http = new(handler ?? new HttpClientHandler { AllowAutoRedirect = false });
         http.Timeout = TimeSpan.FromMinutes(5);
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("VRC-SWITCHEROONIE-Updater/0.2.2");
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("VRC-SWITCHEROONIE-Updater/0.2.3");
         http.DefaultRequestHeaders.Accept.Add(new("application/vnd.github+json"));
         http.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
         this.safety = safety ?? new WindowsUpdateSafety();
@@ -59,7 +69,9 @@ public sealed class UpdateService : IDisposable
             if (!tag.StartsWith('v')) throw new InvalidDataException("Release tag is invalid.");
             string version = tag[1..]; ReleaseTrust.ParseVersion(version);
             string originVersion = store.RememberedBootstrapVersion(policy) ?? policy.BaselineVersion;
-            if (ReleaseTrust.ParseVersion(version) <= ReleaseTrust.ParseVersion(store.Current?.Version ?? originVersion))
+            bool originRepair = store.Current is null && version == originVersion &&
+                safety.NeedsInitialDriverRepair(AppContext.BaseDirectory);
+            if (!originRepair && ReleaseTrust.ParseVersion(version) <= ReleaseTrust.ParseVersion(store.Current?.Version ?? originVersion))
                 return new("Current", "This portable version is current.");
             // Keep a real signed first-release rollback, even when the initial portable package has no selection pointer.
             if (store.Current is null && !Directory.Exists(store.VersionDirectory(policy.BaselineVersion)))
@@ -81,6 +93,11 @@ public sealed class UpdateService : IDisposable
                 await DownloadReleaseAsync(origin.RootElement, originVersion, policy, true, cancellationToken, true);
             }
             if (store.Current is null && originVersion != policy.BaselineVersion) store.VerifyVersion(originVersion, policy);
+            if (originRepair)
+            {
+                store.QueueOriginActivation(policy);
+                return new("Staged", "Signed driver repair downloaded; activation waits for normal shutdown.", originVersion, true, true);
+            }
             await DownloadReleaseAsync(root, version, policy, false, cancellationToken);
             return new("Staged", "Signed update downloaded. Your current session continues; activation waits for normal shutdown.", version, true, true);
         }
@@ -173,16 +190,19 @@ public sealed class UpdateService : IDisposable
     {
         if (store.TransitionPending) throw new IOException("Driver/version transition is incomplete; launch is deferred.");
         var current = store.Current;
-        if (current is null) return Path.Combine(Path.GetFullPath(bootstrapDirectory), "Switcheroonie.UI.exe");
+        if (current is null) return store.ResolveBootstrapUi(bootstrapDirectory, Trust, deliveryVersion);
         store.VerifyVersion(current.Version, Trust);
         return Path.Combine(store.PayloadDirectory(current.Version), "Switcheroonie.UI.exe");
     }
     public void RememberBootstrap(string directory)
     {
         using var updateLock = store.AcquireLock();
-        var version = typeof(UpdateService).Assembly.GetName().Version ?? throw new InvalidDataException("Compiled release version is unavailable.");
-        store.RememberBootstrap(directory, $"{version.Major}.{version.Minor}.{version.Build}");
+        store.RememberBootstrap(directory, deliveryVersion);
     }
+    public Task<UpdateStatus> PrepareLaunchAsync(string directory, CancellationToken cancellationToken = default) =>
+        (store.RequiresOriginPreparation(directory, Trust) || (store.Current is null && safety.NeedsInitialDriverRepair(directory)))
+            ? CheckAndStageAsync(cancellationToken)
+            : Task.FromResult(new UpdateStatus("Current", "Original or selected portable version retained."));
     public string? ResolveStableLauncher(string currentUiDirectory)
     { try { return store.ResolveStableLauncher(currentUiDirectory, Trust); } catch { return null; } }
     public void Dispose() => http.Dispose();

@@ -1,20 +1,21 @@
 # Testing
 
-Version 0.2.2 is an experimental candidate repairing live full-body behavior. Version 0.2.1 fixed a Settings crash found during the first live 0.2.0 check. Software tests and screenshots do not establish visible headset or VRChat behavior.
+Version 0.2.3 adds a standalone download with bundled dependencies, an in-app first setup button, bounded window validation and an owned invisible cursor shape. Its VR spin keeps natural headset movement. Software tests and screenshots do not establish visible headset or VRChat behavior. The live 0.2.2 findings below remain the hardware authority until a replacement is checked.
 
 | Check | Current result |
 |---|---|
-| Managed controls, routing, cursor ownership and spin | 0.2.2 source candidate: 440 checks passed; exact final package validation follows the source build |
-| Native routing, startup, isolated hooks, driver resources and scene self-test | 0.2.2 source candidate: all 9 suites passed, including 1,736 counted assertions |
-| Signed updates, hostile archives and interrupted recovery | 123 fixture checks passed, including signed first-install origin retention |
-| Compact panel, startup ownership and resident lifetime | 94 fixture checks passed, including 13 Settings visual lifecycle regressions |
-| Offscreen layout at 100/150/200% DPI and minimum size | 21 fixtures passed |
-| Installer journal, relocation and canonical state | 20 + 18 + 9 fixture checks passed |
-| Packaged broker/helper processes | Exact 0.2.0 local package: 12 passed, 0 failed, 0 not run; one documented OSC limitation. P01–P06 also passed on fresh Windows CI; 0.2.2 closed-session acceptance pending |
-| New cursor presentation, posture toggles, M/Esc menus and wrists in VRChat | Live retest pending |
-| Whole-avatar spinning, calibration and prediction | Live test pending |
-| Published update download and staging | Production 0.2.1 download, signature and all 456 files verified; signed 0.2.0 baseline retained, active selection unchanged |
-| SteamVR full-body suspension and restoration | Live 0.2.0 Desktop check failed with ten Virtual Desktop trackers; 0.2.2 repair awaiting live check |
+| Managed controls, routing, cursor ownership and spin | Complete 0.2.3 source suite: 466 checks passed, including cached-window identity and invisible-shape fixtures |
+| Native routing, startup, isolated hooks, driver resources and scene self-test | 0.2.3 isolated source build: all 9 suites passed, including 1,772 counted assertions |
+| Signed updates, hostile archives and interrupted recovery | 0.2.3 source: 194 fixture checks passed, including same-origin repair, complete driver resources, bounded launch preparation and cloud-directory tag checks |
+| Compact panel, startup ownership and resident lifetime | 0.2.3: 145 fixture checks passed, including injected one-click setup and retry behavior |
+| Offscreen layout at 100/150/200% DPI and minimum size | 30 fixtures passed |
+| Installer journal, relocation, canonical state and runtime guards | 115 fixture checks passed under Windows PowerShell 5.1; no live installation |
+| Standalone launcher and archive | 32 launcher fixtures passed; file-symlink creation skipped by Windows error1314. Complete payload pins, dependency/runtime tampering and harmless child launch covered; archive suite: 10 checks passed |
+| Packaged broker/helper processes | Exact signed 0.2.2: 12 passed, 0 failed, 0 not run; one documented OSC limitation. 0.2.3 source: 5 private OSC checks passed; public-pipe cases deferred because the user's game/runtime/broker are active |
+| Cursor, menus and wrists in VRChat | 0.2.2 cursor hiding, lag and hand aiming/rotation failed. New cursor/cache code needs a live check |
+| Spinning, calibration and prediction | User confirms spin works; requested VR-view preservation is new in 0.2.3 and needs a live check. Locomotion animation can remain latched in VRChat |
+| Published update download and activation | Production signed 0.2.2 selected with matched driver after user shutdown; signed 0.2.0/0.2.1 history retained; canonical config/journal/registration/bootstrap/startup preserved |
+| SteamVR full-body suspension and restoration | All 10 VD generic trackers independently observed disconnected/invalid in Desktop. Human body movement/posture and VR return passed after disabling VRChat freeze |
 | Windows sign-in and live update activation/rollback | Separate acceptance tests pending |
 | Headset-free VRChat startup | Unsupported |
 
@@ -39,6 +40,10 @@ Screenshots are rendered offscreen with illustrative connection states. Their fi
 The small graphics share a 24 Hz target and cap. The detached animation workload measured about 19.5 updates per second under the Windows scheduler; hidden graphics produced no updates and stopped the shared clock. This measures property updates, not visible GPU rendering or concurrent VRChat performance.
 
 ## Hardware history
+
+On 2026-10-08, an independent background OpenVR client observed all ten VD generic trackers disconnected and invalid while Desktop kept the headset and handed controllers valid. VRChat's Freeze Tracking on Disconnect preference was enabled. The user disabled it in VRChat and confirmed both Desktop body behavior and return to physical full-body tracking. This is a PICO Swan / Virtual Desktop route result. It does not certify other providers or calibration changes.
+
+The held Desktop capture recorded 535 active/captured samples with no positive hidden-cursor observation. The user reported visible cursor and mouse-look lag, then both menu pointer and resting hand rotation failures. The persisted FBT locomotion preference was still off despite reported animation latching after switching/spin. Those findings remain open; the app does not rewrite VRChat preferences or calibration.
 
 PICO Swan through Virtual Desktop passed controlled-scene stereo presentation, repeated switching, held-view stability, mouse look and physical return in earlier builds. Actual VRChat tests then exposed menu closure, cursor and wrist problems. Those failures motivated the new controls and remain failures until the replacement passes its own live checks. Version 0.2.0's software results do not overwrite them.
 

@@ -21,6 +21,9 @@ internal static class PreviewRenderer
             RenderPanel(Path.Combine(directory, $"compact-{dpi}dpi.png"), 540, 400, dpi, false, false, checks);
             RenderPanel(Path.Combine(directory, $"compact-min-{dpi}dpi.png"), 470, 360, dpi, false, false, checks);
             RenderSettings(Path.Combine(directory, $"settings-{dpi}dpi.png"), 500, 580, dpi, "settings", checks);
+            RenderPanel(Path.Combine(directory, $"setup-{dpi}dpi.png"), 470, 360, dpi, true, false, checks, setup: true);
+            RenderSettings(Path.Combine(directory, $"setup-settings-{dpi}dpi.png"), 500, 580, dpi, "setup", checks);
+            RenderSettings(Path.Combine(directory, $"setup-update-{dpi}dpi.png"), 500, 580, dpi, "setup-update", checks);
         }
         RenderPanel(Path.Combine(directory, "main-vr.png"), 540, 400, 96, false, true, checks);
         RenderPanel(Path.Combine(directory, "main-desktop.png"), 540, 400, 96, false, false, checks);
@@ -37,16 +40,21 @@ internal static class PreviewRenderer
         File.WriteAllLines(Path.Combine(directory, "layout-checks.txt"), checks);
     }
     private static void RenderPanel(string path, double width, double height, double dpi, bool waiting, bool physical,
-        List<string> checks, Celebration? frame = null, bool transition = false)
+        List<string> checks, Celebration? frame = null, bool transition = false, bool setup = false)
     {
         var window = new MainWindow(preview: true);
         window.SetPreviewStatus(waiting, physical); window.SetPreviewDpi(dpi);
+        window.SetPreviewSetup(setup);
         if (frame is not null) window.SetPreviewFrame(frame.Value, frame == Celebration.SelfMunch ? 18 : 14);
         if (transition) window.SetPreviewTransition(true, 19);
         var content = (FrameworkElement)window.Content; window.Content = null;
         Layout(content, width, height);
         foreach (string name in new[] { "VrButton", "DesktopButton", "ModeSceneHost", "MascotHost", "RuntimeValue", "HeadsetValue", "ControllerValue", "ReleaseButton", "SettingsButton", "FooterText", "ShortcutText" })
             RequireContained(window, name, content, width, height, path);
+        if (setup) RequireContained(window, "SetupButton", content, width, height, path);
+        if (((FrameworkElement)window.FindName("SetupButton")).Visibility != (setup ? Visibility.Visible : Visibility.Collapsed) ||
+            ((FrameworkElement)window.FindName("PreferenceText")).Visibility != (setup ? Visibility.Collapsed : Visibility.Visible))
+            throw new InvalidOperationException("Setup action must appear only when setup is needed and reserve its own layout space");
         var graphics = Bounds(window, "ModeSceneHost", content);
         var mascot = Bounds(window, "MascotHost", content);
         var controllers = Bounds(window, "ControllerValue", content);
@@ -80,6 +88,7 @@ internal static class PreviewRenderer
     private static void RenderSettings(string path, double width, double height, double dpi, string page, List<string> checks)
     {
         var window = new SettingsWindow(preview: true); window.SetPreviewStatus(spin: page == "spin"); window.SetPreviewSpinDpi(dpi);
+        window.SetPreviewSetup(page == "setup", page == "setup-update");
         var help = (Expander)window.FindName("HelpExpander");
         var credits = (Expander)window.FindName("CreditsExpander");
         var optionalPad = (Expander)window.FindName("AdvancedPadExpander");
@@ -106,6 +115,14 @@ internal static class PreviewRenderer
         if (page == "spin")
             foreach (string name in new[] { "CreditsCard", "SpinCard", "SpinCheck", "SpinIconHost" }) RequireContained(window, name, canvas, width, height, path);
         if (page == "help") RequireContained(window, "HelpExpander", canvas, width, height, path);
+        if (page == "setup")
+            foreach (string name in new[] { "SetupCard", "RunSetupButton", "CheckSetupButton", "SetupStatusText" }) RequireContained(window, name, canvas, width, height, path);
+        if (page == "setup-update")
+        {
+            foreach (string name in new[] { "SetupCard", "SetupUpdateButton", "CheckSetupButton", "SetupStatusText" }) RequireContained(window, name, canvas, width, height, path);
+            if (((Button)window.FindName("RunSetupButton")).Visibility != Visibility.Collapsed)
+                throw new InvalidOperationException("Owned driver update state must not expose install or enable");
+        }
         Save(canvas, path, width, height, dpi);
         checks.Add($"PASS {Path.GetFileName(path)}: single settings window; {page} fixture, no resident, update or input side effects.");
     }

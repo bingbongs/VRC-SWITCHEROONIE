@@ -76,6 +76,7 @@ internal static class CompactSelfTests
         Check(UpdatePresentation.Text(null) == "Not checked yet" && UpdatePresentation.Text(new("Unavailable", "fixture")).Contains("unavailable"), "Missing and failed update state stay explicit");
         Check(new SettingsWindow(preview: true).HeightUpdateLifetimeFixture(), "Height edits keep update lifetime alive; explicit exit cancels it");
         SpinViewportLifecycleTests.Run(Check);
+        SetupServiceTests.Run(Check);
         return count;
     }
 }

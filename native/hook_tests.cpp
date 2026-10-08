@@ -478,15 +478,19 @@ int main()
     for(uint32_t i=0;i<4;++i) router.SetBodySpinEligible(i,true);
     CallPose(&host,0,Pose());CallPose(&leftHost,1,Pose(-.2));
     CallPose(&rightHost,2,Pose(.2));CallPose(&trackerHost,3,Pose(7));
+    const auto physicalHeadCount=hostState.accepted[0];
     hooks.Tick(request.timestamp);
     auto turnedHead=WorldPoint(host.output[0]),turnedTracker=WorldPoint(host.output[3]);
-    Check(std::abs(turnedHead[0]+.75)<1e-9&&std::abs(turnedHead[1]-.95)<1e-9&&
+    auto naturalHead=Pose();
+    Check(std::abs(turnedHead[0])<1e-9&&std::abs(turnedHead[1]-1.7)<1e-9&&
+          std::memcmp(&host.output[0],&naturalHead,sizeof(naturalHead))==0&&
+          hostState.accepted[0]==physicalHeadCount&&
           std::abs(turnedTracker[0]+.75)<1e-9&&std::abs(turnedTracker[1]-7.95)<1e-9&&
           !hostState.wrongOwner&&!inputState.wrongOwner,
-          "Physical cartwheel callbacks and Tick transform the complete tracked body through each real vendor owner");
+          "Physical callbacks/Tick turn hands/body through vendor owners without rewriting the natural headset view");
     auto bodyStatus=hooks.StatusNow(sw::QpcNow());
     Check(!bodyStatus.actualMode&&bodyStatus.bodySpinActive&&bodyStatus.bodySpinGeneration==1&&
-          bodyStatus.bodySpinSamples>=8&&(bodyStatus.reserved0&sw::BodySpinCapability)&&
+          bodyStatus.bodySpinSamples>=6&&(bodyStatus.reserved0&sw::BodySpinCapability)&&
           bodyStatus.position[0]==0&&bodyStatus.position[1]==1.7,
           "Physical spin capability and submitted-generation telemetry preserve independent physical source coordinates");
     auto bodyTrackerCount=hostState.accepted[3];
@@ -504,6 +508,27 @@ int main()
     Check(host.output[0].qWorldFromDriverRotation.z>.7&&host.output[1].qWorldFromDriverRotation.z>.7&&
           host.output[2].qWorldFromDriverRotation.z>.7&&host.output[3].qWorldFromDriverRotation.z>.7,
           "Desktop spin applies after head/hand synthesis and to the independently tracked body device");
+    const auto desktopHeadCount=hostState.accepted[0];
+    request.requestedMode=0;request.armed=0;++request.epoch;
+    request.timestamp=request.bodySpinLeaseQpc=sw::QpcNow();sw::WriteBlock(memory,request);hooks.Tick(request.timestamp);
+    Check(hostState.accepted[0]==desktopHeadCount+1&&
+          std::memcmp(&host.output[0],&naturalHead,sizeof(naturalHead))==0&&
+          host.output[1].qWorldFromDriverRotation.z>.7&&host.output[3].qWorldFromDriverRotation.z>.7,
+          "Desktop-to-Physical with spin held restores the HMD exactly once while body rotation stays leased");
+    Check(!hooks.StatusNow(sw::QpcNow()).syntheticHeadValid,
+          "Physical body spin never labels a prior held or restored HMD snapshot as the synthetic view");
+    hooks.Tick(sw::QpcNow());
+    Check(hostState.accepted[0]==desktopHeadCount+1,
+          "continued Physical body spin never periodically republishes an unowned HMD pose");
+    auto movedHead=Pose(.35);movedHead.qRotation={std::cos(.12),std::sin(.12),0,0};
+    movedHead.poseTimeOffset=-.011;movedHead.vecVelocity[0]=.7;
+    CallPose(&host,0,movedHead);const auto movedHeadCount=hostState.accepted[0];hooks.Tick(sw::QpcNow());
+    Check(hostState.accepted[0]==movedHeadCount&&
+          std::memcmp(&host.output[0],&movedHead,sizeof(movedHead))==0,
+          "new physical head motion and prediction data pass through unchanged while the body continues spinning");
+    CallPose(&host,0,naturalHead);
+    request.requestedMode=1;request.armed=1;++request.epoch;
+    request.timestamp=request.bodySpinLeaseQpc=sw::QpcNow();sw::WriteBlock(memory,request);hooks.Tick(request.timestamp);
     request.bodySpinLeaseQpc-=sw::QpcFrequency()/4;
     request.timestamp=sw::QpcNow();sw::WriteBlock(memory,request);hooks.Tick(request.timestamp);
     Check(hooks.StatusNow(sw::QpcNow()).actualMode&&host.output[0].qWorldFromDriverRotation.w==1&&
@@ -518,12 +543,14 @@ int main()
           "combined mode/reset transaction removes the body transform from every previously spun device");
     request.requestedMode=0;request.bodySpinActive=1;++request.bodySpinGeneration;
     request.timestamp=request.bodySpinLeaseQpc=sw::QpcNow();sw::WriteBlock(memory,request);hooks.Tick(request.timestamp);
+    const auto beforeHeadExpiry=hostState.accepted[0];
     Sleep(210);
     request.timestamp=sw::QpcNow();sw::WriteBlock(memory,request);hooks.Tick(request.timestamp);
-    Check(host.output[0].qWorldFromDriverRotation.w==1&&!host.output[0].poseIsValid&&
+    Check(host.output[0].qWorldFromDriverRotation.w==1&&host.output[0].poseIsValid&&
+          hostState.accepted[0]==beforeHeadExpiry&&
           host.output[3].qWorldFromDriverRotation.w==1&&!host.output[3].poseIsValid&&
           !hooks.StatusNow(sw::QpcNow()).bodySpinActive,
-          "watchdog removes held spin even when callbacks stop and marks stale restored source tracking invalid");
+          "watchdog restores stale owned body output invalid and leaves the unowned physical HMD output untouched");
     request.timestamp=request.bodySpinLeaseQpc=sw::QpcNow();sw::WriteBlock(memory,request);
     CallPose(&leftHost,1,Pose(-.2));CallPose(&rightHost,2,Pose(.2));CallPose(&trackerHost,3,Pose(7));
     hooks.Tick(request.timestamp);

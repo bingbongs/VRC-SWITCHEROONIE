@@ -662,6 +662,10 @@ bool Router::RoutePose(uint32_t index, const Request &r, bool read, int64_t now,
         return false;
     const auto container = containers_[index].load(std::memory_order_acquire);
     const auto role = Role(index);
+    // In Physical mode the viewer follows the actual headset. Spin owns the
+    // hands/body outputs only; freshness of this unmodified head is still part
+    // of complete-rig admission. Desktop intentionally rotates its held view.
+    if (!desktop && role == DeviceRole::Head) return false;
     const bool generic = GenericTracker(index);
     const bool suspend = desktop && generic && !spin;
     const bool applySpin = spin && BodySpinEligible(index);
@@ -758,7 +762,7 @@ Status Router::GetStatus(const Request &r, bool read, int64_t now, int64_t frequ
         s.syntheticHeadEpoch = synthetic.epoch;
         s.syntheticHeadQpc = synthetic.timestamp;
         auto age = (static_cast<double>(now) - synthetic.timestamp) * 1000 / frequency;
-        s.syntheticHeadValid = (s.actualMode || s.bodySpinActive) && synthetic.epoch == r.epoch &&
+        s.syntheticHeadValid = s.actualMode && synthetic.epoch == r.epoch &&
                                age >= -25 && age <= WatchdogMilliseconds &&
                                ValidPose(synthetic.pose);
         auto position = WorldPosition(synthetic.pose);

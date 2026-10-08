@@ -393,6 +393,7 @@ int main()
     HandAndPostureChecks();
     PointerModelChecks();
     BodyControlsChecks();
+    PhysicalHeadViewChecks();
     TrackerSuspensionChecks();
     CompleteRigSpinAdmissionChecks();
     ConfigurationLoaderChecks();

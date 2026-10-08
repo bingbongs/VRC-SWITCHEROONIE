@@ -3,7 +3,7 @@ $ErrorActionPreference='Stop'
 $tokens=$null;$parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepositoryRoot 'tools/Manage-Driver.ps1'),[ref]$tokens,[ref]$parseErrors)
 if($parseErrors.Count){throw 'Installer does not parse.'}
-foreach($name in @('Get-ProcessKnownFolderPath','Read-ConfigText','Convert-JournalConfigText','Read-Journal','Save-Journal','Resolve-OwnedInstallRoot','Get-OwnedInstallRoots','Remove-OwnedInstallRoot','Assert-ConfigUnchanged','Invoke-OwnedRelocation')) {
+foreach($name in @('Get-ProcessKnownFolderPath','Read-ConfigText','Convert-JournalConfigText','Read-Journal','Get-JournalSerializedText','Save-Journal','Resolve-OwnedInstallRoot','Get-OwnedInstallRoots','Assert-OwnedDriverPath','New-OwnedDriverDirectory','Copy-OwnedDriverTree','Remove-OwnedInstallRoot','Assert-ConfigUnchanged','Invoke-OwnedRelocation')) {
     $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
     if($null -eq $definition){throw "Missing owned function $name"}
     Invoke-Expression $definition.Extent.Text
@@ -18,10 +18,13 @@ $driverConfig=Join-Path $sandbox 'driver.json';$journalPath=Join-Path $sandbox '
 $foreignRoot=Join-Path $sandbox 'unrelated-driver'
 $results=New-Object 'System.Collections.Generic.List[object]'
 $exitCode=0;$script:fakeRegistrations=@();$script:failure='';$script:trace=@()
+# This suite tests ownership/rollback with an injected stopped inventory only.
+function Assert-SetupStopped { }
 function Assert([bool]$Condition,[string]$Name){$results.Add([pscustomobject]@{name=$Name;passed=$Condition});if(!$Condition){throw "FAILED: $Name"};Write-Output "PASS $Name"}
 function Get-RegisteredDriverRoots{return @($script:fakeRegistrations)}
 function Set-DriverRegistration([string]$Operation,[string]$Root){
     $Root=Resolve-OwnedInstallRoot $Root
+    Assert-SetupStopped
     $script:trace+=@("$Operation|$Root")
     if($script:failure -eq 'target-add' -and $Operation -eq 'adddriver' -and $Root -eq $relocatedInstallRoot){throw 'Injected target registration failure'}
     if($Operation -eq 'adddriver'){$script:fakeRegistrations=@($script:fakeRegistrations+$Root | Select-Object -Unique)}

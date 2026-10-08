@@ -14,19 +14,34 @@ internal sealed class LookCursorSurface : IDisposable
     readonly string className = "SwitcheroonieLookCursor-" + Guid.NewGuid().ToString("N");
     readonly IntPtr instance;
     readonly OwnedCursorVisibilityPolicy visibility;
-    IntPtr window;
+    IntPtr window, transparentCursor;
     bool visible;
     int shownX, shownY;
+    int cursorInfoAvailable, ownsPointObserved;
+    long hideAttempts, hideObserved;
+    internal bool SurfaceVisible => Volatile.Read(ref visible);
+    internal bool CursorInfoAvailable => Volatile.Read(ref cursorInfoAvailable) != 0;
+    internal bool OwnsPointObserved => Volatile.Read(ref ownsPointObserved) != 0;
+    internal ulong HideAttempts => (ulong)Interlocked.Read(ref hideAttempts);
+    internal ulong HideObserved => (ulong)Interlocked.Read(ref hideObserved);
+    internal bool IsInvisibleShape(CursorNative.CursorInfo info) => TransparentCursorMasks.IsInvisibleShape(info.Cursor, info.Flags, transparentCursor);
     public LookCursorSurface(Func<(bool Allowed, int X, int Y)> authority)
     {
         this.authority = authority; procedure = WindowProc; instance = GetModuleHandle(null);
         visibility = new(new VisibilityOperations(this));
+        var masks = TransparentCursorMasks.Create(Math.Clamp(CursorNative.GetSystemMetrics(13), 1, 256), Math.Clamp(CursorNative.GetSystemMetrics(14), 1, 256));
+        transparentCursor = CreateCursor(instance, 0, 0, masks.Width, masks.Height, masks.And, masks.Xor);
+        if (transparentCursor == IntPtr.Zero) throw new Win32Exception();
         var wc = new WindowClass
         {
             Size = (uint)Marshal.SizeOf<WindowClass>(), Instance = instance, ClassName = className,
-            Procedure = Marshal.GetFunctionPointerForDelegate(procedure), Background = GetStockObject(4)
+            Procedure = Marshal.GetFunctionPointerForDelegate(procedure), Background = GetStockObject(4), Cursor = transparentCursor
         };
-        if (RegisterClassEx(ref wc) == 0) throw new Win32Exception();
+        if (RegisterClassEx(ref wc) == 0)
+        {
+            int error = Marshal.GetLastWin32Error(); DestroyCursor(transparentCursor); transparentCursor = IntPtr.Zero;
+            throw new Win32Exception(error);
+        }
         try
         {
             // WS_EX_NOACTIVATE | TOOLWINDOW | LAYERED. Alpha 1 retains hit
@@ -55,7 +70,7 @@ internal sealed class LookCursorSurface : IDisposable
         if (!visible || !authority().Allowed) Suspend();
         else visibility.Hide();
     }
-    void Suspend() { KillTimer(window, 1); visibility.Suspend(); visible = false; }
+    void Suspend() { KillTimer(window, 1); visibility.Suspend(); visible = false; Volatile.Write(ref ownsPointObserved, 0); }
     IntPtr WindowProc(IntPtr hwnd, uint message, IntPtr wp, IntPtr lp)
     {
         if (message is 0x0113 or 0x8001) { Update(); return IntPtr.Zero; }
@@ -75,6 +90,15 @@ internal sealed class LookCursorSurface : IDisposable
     {
         if (window != IntPtr.Zero) { KillTimer(window, 1); visibility.Dispose(); window = IntPtr.Zero; }
         UnregisterClass(className, instance);
+        if (transparentCursor != IntPtr.Zero)
+        {
+            var info = new CursorNative.CursorInfo { Size = (uint)Marshal.SizeOf<CursorNative.CursorInfo>() };
+            // Never destroy a cursor still in use or replace a foreign owner.
+            // In uncertain teardown retain this single small process-owned
+            // resource until Windows reclaims it at process exit.
+            if (GetCursorInfo(ref info) && info.Cursor != transparentCursor) DestroyCursor(transparentCursor);
+            transparentCursor = IntPtr.Zero;
+        }
     }
     sealed class VisibilityOperations(LookCursorSurface owner) : OwnedCursorVisibilityPolicy.IOperations
     {
@@ -83,8 +107,11 @@ internal sealed class LookCursorSurface : IDisposable
         {
             observation = default;
             var info = new CursorNative.CursorInfo { Size = (uint)Marshal.SizeOf<CursorNative.CursorInfo>() };
-            if (!GetCursorInfo(ref info)) return false;
-            observation = new(OwnsPoint(), info.Cursor == IntPtr.Zero && (info.Flags & 1) == 0);
+            bool available = GetCursorInfo(ref info);
+            Volatile.Write(ref owner.cursorInfoAvailable, available ? 1 : 0);
+            bool owns = available && OwnsPoint(); Volatile.Write(ref owner.ownsPointObserved, owns ? 1 : 0);
+            if (!available) return false;
+            observation = new(owns, owner.IsInvisibleShape(info), owner.transparentCursor != IntPtr.Zero && info.Cursor == owner.transparentCursor);
             return true;
         }
         public bool Hide()
@@ -92,15 +119,20 @@ internal sealed class LookCursorSurface : IDisposable
             // Recheck immediately before mutation: clip ownership alone does
             // not establish which window actually owns the cursor position.
             if (!owner.authority().Allowed || !Read(out var state) || !state.OwnsPoint || !OwnsPoint()) return false;
-            // Keep no foreign HCURSOR across a callback or message pump. A null
-            // return means this call did not replace a non-null cursor shape.
-            return SetCursor(IntPtr.Zero) != IntPtr.Zero;
+            // Use an identifiable invisible shape belonging only to our own
+            // window class. Neither another app's class nor display count is
+            // changed; only an actual own-hit permits assigning this shape.
+            Interlocked.Increment(ref owner.hideAttempts);
+            SetCursor(owner.transparentCursor);
+            bool observed = Read(out var after) && after.OwnsPoint && after.Hidden && after.OwnShape;
+            if (observed) Interlocked.Increment(ref owner.hideObserved);
+            return observed;
         }
         public bool RestoreArrow()
         {
-            if (!Read(out var state) || !state.OwnsPoint || !state.Hidden) return false;
+            if (!Read(out var state) || !state.OwnsPoint || !state.Hidden || !state.OwnShape) return false;
             IntPtr arrow = LoadCursor(IntPtr.Zero, new IntPtr(32512)); // shared IDC_ARROW
-            if (arrow == IntPtr.Zero || !Read(out state) || !state.OwnsPoint || !state.Hidden || !OwnsPoint()) return false;
+            if (arrow == IntPtr.Zero || !Read(out state) || !state.OwnsPoint || !state.Hidden || !state.OwnShape || !OwnsPoint()) return false;
             SetCursor(arrow);
             return true;
         }
@@ -122,6 +154,8 @@ internal sealed class LookCursorSurface : IDisposable
     [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int w, int h, uint flags);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hwnd, int command);
     [DllImport("user32.dll")] static extern IntPtr SetCursor(IntPtr cursor);
+    [DllImport("user32.dll", SetLastError = true)] static extern IntPtr CreateCursor(IntPtr instance, int hotX, int hotY, int width, int height, byte[] andMask, byte[] xorMask);
+    [DllImport("user32.dll")] static extern bool DestroyCursor(IntPtr cursor);
     [DllImport("user32.dll")] static extern bool GetCursorPos(out CursorNative.Point point);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(CursorNative.Point point);
     [DllImport("user32.dll")] static extern bool GetCursorInfo(ref CursorNative.CursorInfo info);
@@ -131,11 +165,12 @@ internal sealed class LookCursorSurface : IDisposable
 }
 
 // Pure cursor-shape ownership policy. The adapter rechecks hit testing before
-// every mutation. Pre-existing hidden shapes create no restoration claim;
-// handoff never overwrites a currently replaced shape, and disposal is terminal.
+// every mutation. Pre-existing foreign hidden shapes create no restoration
+// claim; an exact own class-selected shape does. Handoff never overwrites a
+// replaced shape, and disposal is terminal.
 internal sealed class OwnedCursorVisibilityPolicy(OwnedCursorVisibilityPolicy.IOperations operations) : IDisposable
 {
-    internal readonly record struct Observation(bool OwnsPoint, bool Hidden);
+    internal readonly record struct Observation(bool OwnsPoint, bool Hidden, bool OwnShape = false);
     internal interface IOperations
     {
         bool Read(out Observation observation);
@@ -149,13 +184,13 @@ internal sealed class OwnedCursorVisibilityPolicy(OwnedCursorVisibilityPolicy.IO
     {
         if (disposed || !operations.Read(out var state)) return false;
         if (!state.OwnsPoint) { hiddenByUs = false; return false; }
-        if (state.Hidden) return true;
+        if (state.Hidden) { if (state.OwnShape) hiddenByUs = true; return true; }
         hiddenByUs = operations.Hide();
         return hiddenByUs;
     }
     void Handoff()
     {
-        if (hiddenByUs && operations.Read(out var state) && state.OwnsPoint && state.Hidden)
+        if (hiddenByUs && operations.Read(out var state) && state.OwnsPoint && state.Hidden && state.OwnShape)
             operations.RestoreArrow();
         hiddenByUs = false;
     }
@@ -170,4 +205,20 @@ internal sealed class OwnedCursorVisibilityPolicy(OwnedCursorVisibilityPolicy.IO
         disposed = true;
         Handoff(); operations.HideSurface(); operations.DestroySurface();
     }
+}
+
+// Monochrome AND=1/XOR=0 preserves every screen pixel. Masks are allocated once
+// at surface construction, not during input ticks or WM_SETCURSOR callbacks.
+internal static class TransparentCursorMasks
+{
+    internal readonly record struct Masks(int Width, int Height, byte[] And, byte[] Xor);
+    internal static Masks Create(int width, int height)
+    {
+        if (width is < 1 or > 256 || height is < 1 or > 256) throw new ArgumentOutOfRangeException(nameof(width));
+        int stride = ((width + 15) / 16) * 2; // WORD-aligned monochrome rows.
+        var and = new byte[checked(stride * height)]; Array.Fill(and, byte.MaxValue);
+        return new(width, height, and, new byte[and.Length]);
+    }
+    internal static bool IsInvisibleShape(nint current, uint flags, nint owned) =>
+        current == 0 || (flags & 1) == 0 || owned != 0 && current == owned;
 }

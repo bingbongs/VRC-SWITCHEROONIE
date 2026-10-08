@@ -32,6 +32,12 @@ try {
     $stdout.GetAwaiter().GetResult() | Write-Host
     if ($verifier.ExitCode -ne 0) { $stderr.GetAwaiter().GetResult() | Write-Host; throw 'Release signature/archive/inventory verification failed. Nothing published.' }
 } finally { $verifier.Dispose() }
+$standalone = Join-Path $artifactsPath 'VRC-SWITCHEROONIE-Portable.zip'
+$assets = @($archive,$manifestFile,$signatureFile)
+if (Test-Path -LiteralPath $standalone -PathType Leaf) {
+    & (Join-Path $PSScriptRoot '..\Test-StandaloneArchive.ps1') -Archive $standalone -Package $Package -Manifest $manifestFile
+    $assets += $standalone
+}
 # Explicit publication command. A matching pushed tag is required; create a draft for final review.
-& gh release create "v$($manifest.version)" $archive $manifestFile $signatureFile --repo 'bingbongs/VRC-SWITCHEROONIE' --verify-tag --draft --title "VRC-SWITCHEROONIE $($manifest.version)" --notes-file ([IO.Path]::GetFullPath($NotesFile))
+& gh release create "v$($manifest.version)" @assets --repo 'bingbongs/VRC-SWITCHEROONIE' --verify-tag --draft --title "VRC-SWITCHEROONIE $($manifest.version)" --notes-file ([IO.Path]::GetFullPath($NotesFile))
 if ($LASTEXITCODE -ne 0) { throw 'GitHub release creation failed.' }

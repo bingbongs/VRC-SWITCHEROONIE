@@ -20,6 +20,8 @@ public partial class SettingsWindow : Window
     internal event Action<HarnessStatus>? StatusChanged;
     internal event Action<string>? ConnectionLost;
     internal event Action<string>? MessageChanged;
+    internal event Action<SetupState>? SetupChanged;
+    internal SetupState CurrentSetup => _setupState;
     internal Action? OpenCompactPanel;
     internal Action? SessionExiting;
     private bool _compactVisible;
@@ -43,12 +45,19 @@ public partial class SettingsWindow : Window
         if (_closing) return;
         if (_residentInitialized) LoadStartupRegistration(); // Read fresh state; never configure it on open.
         if (_residentInitialized) _ = RefreshStartupLauncherAsync();
+        if (_residentInitialized) _ = RefreshSetupAsync();
         Owner = owner;
         ShowInTaskbar = false;
         Show();
         Activate();
         _statusTimer.Interval = TimeSpan.FromMilliseconds(250);
         if (_residentInitialized) _inputTimer.Start();
+    }
+    internal void ShowSetup(Window owner)
+    {
+        ShowSettings(owner);
+        SetupExpander.IsExpanded = true;
+        SetupCard.BringIntoView();
     }
     private readonly BrokerClient _broker = new();
     private readonly SemaphoreSlim _brokerGate = new(1, 1);
@@ -57,6 +66,10 @@ public partial class SettingsWindow : Window
     private readonly DispatcherTimer _heightTimer = new() { Interval = TimeSpan.FromMilliseconds(100) };
     private readonly DispatcherTimer _updateTimer = new() { Interval = TimeSpan.FromHours(6) };
     private readonly CancellationTokenSource _updateCancellation = new();
+    private readonly SetupService _setupService = new(new WindowsSetupBoundary(AppContext.BaseDirectory));
+    private SetupState _setupState = new("Checking", "Checking SteamVR setup…");
+    private Task<SetupState>? _setupReadTask, _setupRunTask;
+    private bool _setupWorkPending;
     private Task<UpdateStatus>? _updateTask;
     private UpdateStatus? _cachedUpdate;
     private HarnessStatus _status = new();
@@ -126,6 +139,7 @@ public partial class SettingsWindow : Window
             () => _ = RetryServiceAsync(), () => _ = ExitPanelAsync());
         LoadStartupRegistration();
         _ = RefreshStartupLauncherAsync();
+        _ = RefreshSetupAsync();
         const uint modifiers = 0x0001 | 0x0002 | 0x4000; // ALT | CONTROL | NOREPEAT
         _toggleHotkey = RegisterHotKey(_window, ToggleHotkeyId, modifiers, 0x79); // F10
         _releaseHotkey = RegisterHotKey(_window, ReleaseHotkeyId, modifiers, 0x7B); // F12
@@ -165,6 +179,56 @@ public partial class SettingsWindow : Window
     private async void HidePanel_Click(object sender, RoutedEventArgs e) => await HidePanelAsync();
     private async void RetryService_Click(object sender, RoutedEventArgs e) => await RetryServiceAsync();
     private async void CheckUpdate_Click(object sender, RoutedEventArgs e) => await CheckUpdatesAsync();
+    private async void CheckSetup_Click(object sender, RoutedEventArgs e) => await RefreshSetupAsync();
+    private async void SetupUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        if (_preview || _closing || !_residentInitialized) return;
+        await CheckUpdatesAsync();
+        if (!_closing && _setupState.State == "UpdateNeeded") SetupStatusText.Text = UpdatePresentation.Text(_cachedUpdate);
+    }
+    private async Task RefreshSetupAsync()
+    {
+        if (_preview || _closing || !_residentInitialized || _setupWorkPending) return;
+        _setupWorkPending = true;
+        CheckSetupButton.IsEnabled = RunSetupButton.IsEnabled = false;
+        SetupStatusText.Text = "Checking SteamVR setup…";
+        _setupReadTask = Task.Run(() => _setupService.Inspect());
+        SetupState result;
+        try { result = await _setupReadTask; }
+        catch (Exception) { result = new("Unavailable", "Setup check unavailable · try again"); }
+        finally { _setupWorkPending = false; }
+        if (!_closing) RenderSetup(result);
+    }
+    private async void RunSetup_Click(object sender, RoutedEventArgs e)
+    {
+        if (_preview || _closing || !_residentInitialized || _setupWorkPending) return;
+        _setupWorkPending = true;
+        CheckSetupButton.IsEnabled = RunSetupButton.IsEnabled = false;
+        SetupStatusText.Text = "Setting up SteamVR…";
+        _setupRunTask = Task.Run(() => _setupService.RunAsync());
+        SetupState result;
+        try { result = await _setupRunTask; }
+        catch (Exception) { result = new("Recovery", "Setup did not finish · recovery record retained"); }
+        finally { _setupWorkPending = false; }
+        if (!_closing) { RenderSetup(result); await PollAsync(); }
+    }
+    private void RenderSetup(SetupState state)
+    {
+        _setupState = state;
+        SetupStatusText.Text = state.Detail;
+        RunSetupButton.Content = state.ActionText;
+        RunSetupButton.IsEnabled = state.CanRun;
+        RunSetupButton.Visibility = state.Ready || state.State == "UpdateNeeded" ? Visibility.Collapsed : Visibility.Visible;
+        SetupUpdateButton.Visibility = state.State == "UpdateNeeded" ? Visibility.Visible : Visibility.Collapsed;
+        CheckSetupButton.IsEnabled = true;
+        SetupChanged?.Invoke(state);
+    }
+    internal void SetPreviewSetup(bool needed, bool update = false)
+    {
+        if (!_preview) throw new InvalidOperationException("Offscreen fixture only");
+        RenderSetup(update ? new("UpdateNeeded", "UI PREVIEW · signed driver update needed") : needed ? new("Needed", "UI PREVIEW · SteamVR setup needed", SetupOperation.Install) : new("Ready", "UI PREVIEW · SteamVR setup ready"));
+        SetupExpander.IsExpanded = needed || update;
+    }
     private async Task CheckUpdatesAsync()
     {
         if (_preview || _closing || !_residentInitialized || _updateTask is { IsCompleted: false }) return;
@@ -872,7 +936,7 @@ public partial class SettingsWindow : Window
                 timestampUtc = DateTime.UtcNow,
                 brokerResponding = _connected,
                 status = _connected ? _status : null,
-            uiVersion = "0.2.2",
+                uiVersion = "0.2.3",
                 hardwareTests = "Not performed by this panel; consult the evidence reports.",
                 shortcuts = new { toggleRegistered = _toggleHotkey, releaseRegistered = _releaseHotkey }
             };

@@ -30,3 +30,6 @@ try {
     $stdout.GetAwaiter().GetResult() | Write-Host
     if ($process.ExitCode -ne 0) { $stderr.GetAwaiter().GetResult() | Write-Host; throw 'Release signature preparation failed. Nothing published.' }
 } finally { $process.Dispose() }
+if (Test-Path -LiteralPath (Join-Path $packagePath 'portable\VRC-SWITCHEROONIE.exe') -PathType Leaf) {
+    & (Join-Path $PSScriptRoot '..\New-StandaloneArchive.ps1') -Package $packagePath -Output (Join-Path $outputPath 'VRC-SWITCHEROONIE-Portable.zip')
+}

@@ -8,6 +8,8 @@ try
     {
         using var updater = new UpdateService();
         updater.RememberBootstrap(AppContext.BaseDirectory);
+        using (var launchBudget = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            await updater.PrepareLaunchAsync(AppContext.BaseDirectory, launchBudget.Token);
         updater.TryActivate();
         string ui = updater.ResolveUi(AppContext.BaseDirectory);
         if (!File.Exists(ui)) throw new IOException("Selected portable UI is missing.");

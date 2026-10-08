@@ -39,6 +39,20 @@ try
     var first = Fixture.Make(key, trust, "0.2.1", 2);
     var second = Fixture.Make(key, trust, "0.2.2", 3);
     var baseline = Fixture.Make(key, trust, "0.2.0", 1);
+    Refused(() => new UpdateService(fixtureDeliveryVersion: "0.2.1"), "compiled release override is unavailable without a complete isolated fixture boundary");
+    Refused(() => new UpdateService(Path.Combine(fixtureRoot, "invalid-production-fixture"),
+        new(ReleaseTrust.ProductionRepository, trust.PublicKey, trust.BaselineVersion), new FakeHttp(first, trust, baseline), new Safety(true), "0.2.1"),
+        "production repository never accepts a fixture delivery-version override");
+    const uint cloudDirectory = (uint)(FileAttributes.Directory | FileAttributes.ReparsePoint);
+    for (uint tagVariant=0; tagVariant<16; tagVariant++)
+        Check(UpdatePathPolicy.IsCloudDirectory(cloudDirectory, 0x9000001Au | (tagVariant << 12)),
+            "exact Microsoft non-name-surrogate CLOUD directory tag allowed " + tagVariant);
+    foreach (uint tag in new uint[] { 0xA0000003, 0xA000000C, 0xB000001A, 0x9001001A, 0x80000013, 0x90000001, 0, 0x1000001A })
+        Check(!UpdatePathPolicy.IsCloudDirectory(cloudDirectory, tag), "junction symbolic surrogate unknown and malformed cloud tags refused " + tag.ToString("X8"));
+    Check(!UpdatePathPolicy.IsCloudDirectory((uint)FileAttributes.ReparsePoint, 0x9000601A), "cloud-tagged files never receive the directory exception");
+    Check(!UpdatePathPolicy.IsCloudDirectory((uint)FileAttributes.Directory, 0x9000601A), "tag evidence requires actual reparse plus directory attributes");
+    _ = new VersionStore(Path.Combine(Environment.CurrentDirectory, "build", "readonly-cloud-policy-fixture"));
+    Check(true, "read-only path verification supports known cloud directory ancestors of the repository without creating state");
     Check(ManifestVerifier.Verify(first.ManifestBytes, first.Signature, trust).Version == "0.2.1", "valid exact signature and inventory");
     var altered = first.ManifestBytes.ToArray(); altered[^2] ^= 1;
     Refused(() => ManifestVerifier.Verify(altered, first.Signature, trust), "tampered signed bytes");
@@ -135,6 +149,22 @@ try
         }
         originStore.RememberBootstrap(later22, "0.2.2");
         Check(originStore.RememberedBootstrapVersion(trust) == "0.2.1", "later launcher preserves first recorded release origin");
+        Check(originStore.RequiresOriginPreparation(later22, trust) && !originStore.RequiresOriginPreparation(original21, trust),
+            "new delivery folder requests signed staging instead of bypassing recorded origin");
+        Check(originStore.ResolveBootstrapUi(later22, trust, "0.2.2") == Path.Combine(original21, "Switcheroonie.UI.exe"),
+            "unselected later delivery opens fully verified original UI while transition waits");
+        Check(originStore.ResolveBootstrapUi(original21, trust, "0.2.1") == Path.Combine(original21, "Switcheroonie.UI.exe"),
+            "matching compiled original release remains available offline");
+        string exactOriginalMetadata = File.ReadAllText(Path.Combine(originStore.Root, "bootstrap.json"));
+        foreach (string changedVersion in new[] { "0.2.0", "99.0.0" })
+        {
+            File.WriteAllText(Path.Combine(originStore.Root, "bootstrap.json"), JsonSerializer.Serialize(new { directory = original21, version = changedVersion }));
+            Refused(() => originStore.ResolveBootstrapUi(original21, trust, "0.2.1"),
+                "same-folder altered remembered release cannot bypass compiled authority " + changedVersion);
+        }
+        File.WriteAllText(Path.Combine(originStore.Root, "bootstrap.json"), JsonSerializer.Serialize(new { directory = original21 }));
+        Refused(() => originStore.ResolveBootstrapUi(original21, trust, "0.2.1"), "legacy unversioned record cannot misidentify a newer compiled delivery");
+        File.WriteAllText(Path.Combine(originStore.Root, "bootstrap.json"), exactOriginalMetadata);
         await originStore.StageAsync(new MemoryStream(second.Archive), second.Manifest, second.ManifestBytes, second.Signature, trust);
         Check(originStore.Activate(trust, new Safety(true)).State == "Activated" && originStore.Current?.PreviousVersion == "0.2.1",
             "fresh2.1 user updates2.2 with exact signed original rollback target");
@@ -143,6 +173,7 @@ try
         "fresh2.1 origin resolves after2.2 against original signed2.1 inventory");
     Check(originStore.ResolveStableLauncher(later22, trust) is null, "unselected UI path cannot resolve authority");
     File.AppendAllText(Path.Combine(original21, "Switcheroonie.Common.dll"), "changed");
+    Refused(() => originStore.ResolveBootstrapUi(later22, trust, "0.2.2"), "changed origin dependency refused on unselected delivery resolution");
     Refused(() => originStore.ResolveStableLauncher(originStore.PayloadDirectory("0.2.2"), trust), "changed origin dependency fails complete signed verification");
     File.Copy(Path.Combine(originStore.PayloadDirectory("0.2.1"), "Switcheroonie.Common.dll"), Path.Combine(original21, "Switcheroonie.Common.dll"), true);
     string savedOriginMetadata = File.ReadAllText(Path.Combine(originStore.Root, "bootstrap.json"));
@@ -167,6 +198,8 @@ try
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             File.Copy(Path.Combine(legacyOriginStore.PayloadDirectory("0.2.0"), item.Path.Replace('/', Path.DirectorySeparatorChar)), destination);
         }
+        Check(legacyOriginStore.ResolveBootstrapUi(original20, trust, "0.2.0") == Path.Combine(original20, "Switcheroonie.UI.exe"),
+            "genuine legacy unversioned2.0 delivery retains offline startup compatibility");
         await legacyOriginStore.StageAsync(new MemoryStream(first.Archive), first.Manifest, first.ManifestBytes, first.Signature, trust);
         legacyOriginStore.Activate(trust, new Safety(true));
     }
@@ -196,6 +229,108 @@ try
             "HTTP staged first update retains actual2.1 rollback");
         Check(service.ResolveStableLauncher(originHttpStore.PayloadDirectory("0.2.2")) == Path.Combine(original21, "VRC-SWITCHEROONIE.exe"),
             "service resolves independently signed actual origin after first update");
+    }
+    string deliveryLaunchRoot = Path.Combine(fixtureRoot, "new-delivery-launch");
+    var deliveryLaunchStore = new VersionStore(deliveryLaunchRoot);
+    using (deliveryLaunchStore.AcquireLock()) deliveryLaunchStore.RememberBootstrap(original21, "0.2.1");
+    using (var handler = new FakeHttp(second, trust, baseline, first))
+    using (var service = new UpdateService(deliveryLaunchRoot, trust, handler, new Safety(false)))
+    {
+        Check((await service.PrepareLaunchAsync(original21)).State == "Current" && handler.ZipDownloads == 0,
+            "original offline launcher does not require a network download");
+        Check((await service.PrepareLaunchAsync(later22)).State == "Staged" && handler.ZipDownloads == 3,
+            "later standalone delivery independently stages candidate floor and origin before selection");
+        Check(service.TryActivate().State == "Deferred" && deliveryLaunchStore.Current is null &&
+            service.ResolveUi(later22) == Path.Combine(original21, "Switcheroonie.UI.exe"),
+            "active session launches original UI rather than new unmanaged delivery");
+    }
+    using (var service = new UpdateService(deliveryLaunchRoot, trust, new FakeHttp(second, trust, baseline, first), new Safety(true)))
+        Check(service.TryActivate().State == "Activated" && service.ResolveUi(later22) ==
+            Path.Combine(deliveryLaunchStore.PayloadDirectory("0.2.2"), "Switcheroonie.UI.exe"),
+            "stopped session matches signed driver selection before launching new delivery");
+    var canceledLaunchStore = new VersionStore(Path.Combine(fixtureRoot, "canceled-launch"));
+    using (canceledLaunchStore.AcquireLock())
+    {
+        canceledLaunchStore.RememberBootstrap(original21, "0.2.1");
+        await canceledLaunchStore.StageBootstrapAsync(new MemoryStream(baseline.Archive), baseline.Manifest, baseline.ManifestBytes, baseline.Signature, trust);
+        await canceledLaunchStore.StageOriginAsync(new MemoryStream(first.Archive), first.Manifest, first.ManifestBytes, first.Signature, trust);
+    }
+    using (var handler = new FakeHttp(second, trust, baseline, first) { StallArchive = true })
+    using (var service = new UpdateService(canceledLaunchStore.Root, trust, handler, new Safety(false)))
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+        var watch = Stopwatch.StartNew();
+        var canceled = await service.PrepareLaunchAsync(later22, deadline.Token).WaitAsync(TimeSpan.FromSeconds(3));
+        Check(handler.ArchiveStalled && canceled.State == "Deferred" && watch.Elapsed < TimeSpan.FromSeconds(3),
+            "launch cancellation bounds an otherwise infinite archive stream after successful HTTP headers");
+        Check(canceledLaunchStore.Current is null && canceledLaunchStore.PendingVersion is null && canceledLaunchStore.HighestSequence == 0 &&
+            service.ResolveUi(later22) == Path.Combine(original21, "Switcheroonie.UI.exe") &&
+            !Directory.EnumerateDirectories(Path.Combine(canceledLaunchStore.Root, "staging")).Any(),
+            "canceled download retains verified original UI and no pending/highwater/partial staging state");
+    }
+    // An original delivery can repair an existing journal-owned driver without
+    // inventing a signed previous version for unknown installed bytes.
+    string repairRoot = Path.Combine(fixtureRoot, "origin-driver-repair");
+    var repairStore = new VersionStore(repairRoot);
+    using (repairStore.AcquireLock()) repairStore.RememberBootstrap(original21, "0.2.1");
+    using (var handler = new FakeHttp(first, trust, baseline))
+    using (var service = new UpdateService(repairRoot, trust, handler, new Safety(false) { RepairRequired = true }, fixtureDeliveryVersion: "0.2.1"))
+    {
+        Check((await service.PrepareLaunchAsync(original21)).State == "Staged" && handler.ZipDownloads == 2,
+            "same original delivery stages signed floor and original for owned driver repair");
+        Check(repairStore.PendingVersion == "0.2.1" && repairStore.HighestSequence == 2 && repairStore.Current is null,
+            "initial repair retains original selection and signed high-water until activation");
+        Check(service.TryActivate().State == "Deferred" && !repairStore.TransitionPending,
+            "initial repair refuses active runtime before transition or driver changes");
+        Check(service.ResolveUi(original21) == Path.Combine(original21, "Switcheroonie.UI.exe"),
+            "waiting original repair retains the reviewed original UI");
+    }
+    string repairMarker = File.ReadAllText(Path.Combine(repairRoot, "origin-selection.json"));
+    File.WriteAllText(Path.Combine(repairRoot, "origin-selection.json"), repairMarker.Replace("0.2.1", "0.2.0"));
+    Refused(() => repairStore.Activate(trust, new Safety(true)), "forged origin marker cannot grant same-version activation");
+    File.WriteAllText(Path.Combine(repairRoot, "origin-selection.json"), repairMarker);
+    File.WriteAllText(Path.Combine(repairRoot, "highest.json"), "{\"sequence\":3}");
+    Refused(() => repairStore.Activate(trust, new Safety(true)), "same-origin repair cannot replay below newer signed high-water");
+    File.WriteAllText(Path.Combine(repairRoot, "highest.json"), "{\"sequence\":2}");
+    File.AppendAllText(Path.Combine(original21, "Switcheroonie.Common.dll"), "changed");
+    Refused(() => repairStore.Activate(trust, new Safety(true)), "initial driver repair verifies every original dependency");
+    File.Copy(Path.Combine(originStore.PayloadDirectory("0.2.1"), "Switcheroonie.Common.dll"), Path.Combine(original21, "Switcheroonie.Common.dll"), true);
+    var interruptedRepair = new Safety(true, true, true, false);
+    Check(repairStore.Activate(trust, interruptedRepair).State == "Deferred" && repairStore.TransitionPending && repairStore.Current is null,
+        "initial repair records recovery before a runtime appearing after driver preparation");
+    Check(interruptedRepair.DriverPreparations == 1, "initial repair prepares a driver only through the safety authority");
+    using (var service = new UpdateService(repairRoot, trust, new FakeHttp(first, trust, baseline), new Safety(false)))
+        Refused(() => service.ResolveUi(original21), "incomplete original repair pairing refuses UI launch");
+    File.WriteAllText(Path.Combine(repairRoot, "origin-selection.json"), repairMarker.Replace("\"sequence\":2", "\"sequence\":99"));
+    Refused(() => repairStore.Activate(trust, new Safety(true)), "interrupted original repair revalidates receipt-bound marker");
+    File.WriteAllText(Path.Combine(repairRoot, "origin-selection.json"), repairMarker);
+    Check(repairStore.Activate(trust, new Safety(true)).State == "Activated" && repairStore.Current?.Version == "0.2.1" &&
+        repairStore.Current.PreviousVersion is null && !repairStore.TransitionPending && repairStore.PendingVersion is null &&
+        !File.Exists(Path.Combine(repairRoot, "origin-selection.json")),
+        "stopped original repair commits signed pairing without fictitious rollback and removes marker");
+    Check(repairStore.Rollback(trust, new Safety(true)).State == "Current", "original repair never rolls back to unknown installed bytes");
+    File.WriteAllText(Path.Combine(repairRoot, "origin-selection.json"), repairMarker);
+    File.WriteAllText(Path.Combine(repairRoot, "transition.json"), "{\"version\":\"0.2.1\",\"previousVersion\":null,\"kind\":\"Origin\"}");
+    Check(repairStore.Activate(trust, new Safety(true)).State == "Activated" && !repairStore.TransitionPending,
+        "crash after original repair selection safely repeats exact signed transition");
+    var markerOnlyStore = new VersionStore(Path.Combine(fixtureRoot, "repair-marker-only"));
+    using (markerOnlyStore.AcquireLock())
+    {
+        markerOnlyStore.RememberBootstrap(original21, "0.2.1");
+        await markerOnlyStore.StageBootstrapAsync(new MemoryStream(baseline.Archive), baseline.Manifest, baseline.ManifestBytes, baseline.Signature, trust);
+        await markerOnlyStore.StageOriginAsync(new MemoryStream(first.Archive), first.Manifest, first.ManifestBytes, first.Signature, trust);
+        markerOnlyStore.QueueOriginActivation(trust);
+        File.Delete(Path.Combine(markerOnlyStore.Root, "pending.json"));
+        markerOnlyStore.QueueOriginActivation(trust);
+        Check(markerOnlyStore.PendingVersion == "0.2.1" && markerOnlyStore.Activate(trust, new Safety(true)).State == "Activated",
+            "crash before final pending write can retry origin repair without lowering high-water");
+    }
+    var noRepairHandler = new FakeHttp(first, trust, baseline);
+    using (var service = new UpdateService(Path.Combine(fixtureRoot, "no-repair"), trust, noRepairHandler, new Safety(true)))
+    {
+        service.RememberBootstrap(original21);
+        Check((await service.PrepareLaunchAsync(original21)).State == "Current" && noRepairHandler.ZipDownloads == 0,
+            "fresh original without owned driver repair still launches offline without downloads");
     }
     string compiledOriginRoot = Path.Combine(fixtureRoot, "compiled-origin");
     using (var service = new UpdateService(compiledOriginRoot, trust, new FakeHttp(first, trust, baseline), new Safety(false)))
@@ -259,6 +394,48 @@ try
     Check(File.ReadAllText(fixtureRegistration) == registrationBefore && File.ReadAllText(driverPaths.InstallationJournal) == journalBefore &&
         File.ReadAllText(driverPaths.DriverConfiguration) == ownedConfig, "driver update preserves opt-in config journal and registration byte-for-byte");
     Check(driverTransition.ApplyFixture(store.PayloadDirectory(second.Manifest.Version), second.Manifest, fixtureRegistration).State == "Matched", "matched driver transition is idempotent");
+    File.WriteAllText(Path.Combine(ownedDriver, "foreign-resource.txt"), "preserve foreign resource");
+    string exactDriverBeforeConflict = File.ReadAllText(ownedDll);
+    Refused(() => driverTransition.ApplyFixture(store.PayloadDirectory(second.Manifest.Version), second.Manifest, fixtureRegistration),
+        "signed driver transition refuses foreign installed extras before any file replacement");
+    Check(File.ReadAllText(ownedDll) == exactDriverBeforeConflict && File.ReadAllText(Path.Combine(ownedDriver, "foreign-resource.txt")) == "preserve foreign resource" &&
+        File.ReadAllText(fixtureRegistration) == registrationBefore && File.ReadAllText(driverPaths.InstallationJournal) == journalBefore,
+        "foreign driver resource conflict preserves native journal and registration bytes");
+    File.Delete(Path.Combine(ownedDriver, "foreign-resource.txt"));
+
+    string comparisonSource = Path.Combine(fixtureRoot, "comparison-source"), comparisonInstalled = Path.Combine(fixtureRoot, "comparison-installed");
+    void CopyDriverFixture(string destination)
+    {
+        Directory.CreateDirectory(destination);
+        foreach (string file in Directory.EnumerateFiles(Path.Combine(store.PayloadDirectory(second.Manifest.Version), "driver"), "*", SearchOption.AllDirectories))
+        {
+            string target = Path.Combine(destination, Path.GetRelativePath(Path.Combine(store.PayloadDirectory(second.Manifest.Version), "driver"), file));
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!); File.Copy(file, target);
+        }
+        File.WriteAllText(Path.Combine(destination, "profile.json"), "{\"fixture\":true}");
+    }
+    CopyDriverFixture(comparisonSource); CopyDriverFixture(comparisonInstalled);
+    Check(!WindowsUpdateSafety.DriverInventoryNeedsRepair(comparisonSource, comparisonInstalled), "complete equal companion inventory needs no initial repair");
+    File.WriteAllText(Path.Combine(comparisonInstalled, "profile.json"), "{\"fixture\":false}");
+    Check(WindowsUpdateSafety.DriverInventoryNeedsRepair(comparisonSource, comparisonInstalled), "resource-only mismatch requests repair even with matching DLL");
+    File.Delete(Path.Combine(comparisonInstalled, "profile.json"));
+    Check(WindowsUpdateSafety.DriverInventoryNeedsRepair(comparisonSource, comparisonInstalled), "missing packaged companion resource requests repair");
+    File.Copy(Path.Combine(comparisonSource, "profile.json"), Path.Combine(comparisonInstalled, "profile.json"));
+    File.WriteAllText(Path.Combine(comparisonInstalled, "extra.txt"), "foreign");
+    Refused(() => WindowsUpdateSafety.DriverInventoryNeedsRepair(comparisonSource, comparisonInstalled), "initial inventory refuses extra installed files instead of claiming repair or current");
+    File.Delete(Path.Combine(comparisonInstalled, "extra.txt"));
+    foreach (string bound in new[] { "files", "directories", "bytes" })
+    {
+        string excessiveSource = Path.Combine(fixtureRoot, "excessive-source-" + bound); CopyDriverFixture(excessiveSource);
+        switch (bound)
+        {
+            case "files": for (int index=0;index<257;index++) File.WriteAllText(Path.Combine(excessiveSource, "bound-" + index), ""); break;
+            case "directories": for (int index=0;index<257;index++) Directory.CreateDirectory(Path.Combine(excessiveSource, "bound-" + index)); break;
+            case "bytes": using (var file = File.OpenWrite(Path.Combine(excessiveSource, "oversized.bin"))) file.SetLength(64L*1024*1024+1); break;
+        }
+        Refused(() => WindowsUpdateSafety.DriverInventoryNeedsRepair(excessiveSource, comparisonInstalled), "packaged companion source enforces " + bound + " bound");
+        Refused(() => WindowsUpdateSafety.DriverInventoryNeedsRepair(comparisonSource, excessiveSource), "installed companion source enforces " + bound + " bound");
+    }
     File.WriteAllText(driverPaths.DriverConfiguration, ownedConfig + " ");
     Refused(() => driverTransition.ApplyFixture(interrupted.PayloadDirectory("0.2.0"), baseline.Manifest, fixtureRegistration), "foreign config conflict prevents native replacement");
     File.WriteAllText(driverPaths.DriverConfiguration, ownedConfig);
@@ -314,7 +491,12 @@ if (failed != 0) Environment.ExitCode = 1;
 sealed class Safety(params bool[] answers) : IUpdateSafety
 {
     int calls;
+    public bool RepairRequired { get; init; }
+    public int DriverPreparations { get; private set; }
     public bool CanActivate() => answers[Math.Min(calls++, answers.Length - 1)];
+    public bool NeedsInitialDriverRepair(string directory) => RepairRequired;
+    public DriverTransitionResult PrepareDriver(string payload, ReleaseManifest manifest)
+    { DriverPreparations++; return new("NotInstalled"); }
 }
 sealed record Fixture(ReleaseManifest Manifest, byte[] ManifestBytes, byte[] Signature, byte[] Archive)
 {
@@ -361,6 +543,7 @@ sealed record Fixture(ReleaseManifest Manifest, byte[] ManifestBytes, byte[] Sig
 sealed class FakeHttp(Fixture fixture, ReleaseTrust trust, Fixture baseline, Fixture? origin = null) : HttpMessageHandler
 {
     public bool BadSignature { get; init; } public bool EvilRedirect { get; init; } public int ZipDownloads { get; private set; }
+    public bool StallArchive { get; init; } public bool ArchiveStalled { get; private set; }
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         if (EvilRedirect) { var redirect = new HttpResponseMessage(HttpStatusCode.Found); redirect.Headers.Location = new("https://evil.example/payload"); return Task.FromResult(redirect); }
@@ -378,7 +561,33 @@ sealed class FakeHttp(Fixture fixture, ReleaseTrust trust, Fixture baseline, Fix
         }
         else if (path.EndsWith("/release-manifest.json")) bytes = selected.ManifestBytes;
         else if (path.EndsWith("/release-signature.bin")) bytes = BadSignature ? new byte[64] : selected.Signature;
-        else { ZipDownloads++; bytes = selected.Archive; }
+        else
+        {
+            ZipDownloads++;
+            if (StallArchive)
+            {
+                ArchiveStalled = true;
+                var content = new StreamContent(new CancellationWaitStream());
+                content.Headers.ContentLength = selected.Manifest.ArchiveBytes;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+            }
+            bytes = selected.Archive;
+        }
         return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) });
     }
+}
+sealed class CancellationWaitStream : Stream
+{
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); return 0; }
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override void Flush() => throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 }

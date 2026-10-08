@@ -87,28 +87,52 @@ internal static class OwnedCursorVisibilityTests
         Verify(policy.Hide() && ops.HideCalls == 2, "a new authorized look interval can acquire its own visible shape");
         policy.Suspend();
         Verify(ops.RestoreCalls == 2, "each authorized interval receives exactly its own handoff");
+
+        (policy, ops) = Create(); ops.Hidden = ops.OwnShape = true;
+        Verify(policy.Hide() && ops.HideCalls == 0, "our own class-selected transparent shape is adopted without another cursor mutation");
+        policy.Suspend();
+        Verify(ops.RestoreCalls == 1, "owned class cursor is handed off immediately on pointer/release even without mouse movement");
+        (policy, ops) = Create(); ops.Hidden = ops.OwnShape = true; ops.OwnsPoint = false;
+        policy.Hide(); policy.Suspend();
+        Verify(ops.RestoreCalls == 0, "known transparent shape still cannot authorize handoff under a foreign hit window");
+        Verify(TransparentCursorMasks.IsInvisibleShape(42, 1, 42), "a Windows SHOWING flag does not make our all-transparent image visible");
+        Verify(!TransparentCursorMasks.IsInvisibleShape(43, 1, 42), "a foreign visible cursor handle is never reported as our invisible shape");
+        Verify(TransparentCursorMasks.IsInvisibleShape(0, 1, 42) && TransparentCursorMasks.IsInvisibleShape(43, 0, 42),
+            "null shape and a pre-existing hidden display flag remain honest invisible observations without ownership");
+        var mask = TransparentCursorMasks.Create(32, 32);
+        Verify(mask.And.Length == 128 && mask.And.All(x => x == 255) && mask.Xor.All(x => x == 0) &&
+            Enumerable.Range(0, 256).All(pixel => ((pixel & mask.And[0]) ^ mask.Xor[0]) == pixel),
+            "owned monochrome cursor preserves every screen pixel with AND1/XOR0 and correct bounded storage");
+        var oddMask = TransparentCursorMasks.Create(17, 2);
+        Verify(oddMask.And.Length == 8 && oddMask.Xor.Length == 8, "nonstandard cursor widths keep WORD-aligned mask rows");
+        bool rejected = false;
+        try { TransparentCursorMasks.Create(257, 32); } catch (ArgumentOutOfRangeException) { rejected = true; }
+        Verify(rejected, "unbounded cursor mask allocation is refused without native API calls");
+        (policy, ops) = Create(); policy.Hide(); ops.OwnShape = false;
+        policy.Suspend();
+        Verify(ops.RestoreCalls == 0 && ops.Hidden, "a foreign null or display-count-hidden replacement is preserved even at our lock point");
     }
 
     sealed class FakeOperations : OwnedCursorVisibilityPolicy.IOperations
     {
-        internal bool OwnsPoint = true, OwnAtMutation = true, Hidden, SurfaceVisible = true;
+        internal bool OwnsPoint = true, OwnAtMutation = true, Hidden, OwnShape, SurfaceVisible = true;
         internal bool ReadSucceeds = true, HideAuthority = true, HiddenAtRestore = true, RestoreSucceeds = true;
         internal int ReadCalls, HideCalls, RestoreCalls, RestoreAttempts, DestroyCalls;
         internal readonly List<string> Events = [];
         public bool Read(out OwnedCursorVisibilityPolicy.Observation observation)
         {
-            ++ReadCalls; observation = new(OwnsPoint, Hidden); return ReadSucceeds;
+            ++ReadCalls; observation = new(OwnsPoint, Hidden, OwnShape); return ReadSucceeds;
         }
         public bool Hide()
         {
             if (!HideAuthority || !OwnsPoint || !OwnAtMutation || Hidden) return false;
-            ++HideCalls; Hidden = true; Events.Add("hide-shape"); return true;
+            ++HideCalls; Hidden = OwnShape = true; Events.Add("hide-shape"); return true;
         }
         public bool RestoreArrow()
         {
             ++RestoreAttempts;
-            if (!OwnsPoint || !OwnAtMutation || !Hidden || !HiddenAtRestore || !RestoreSucceeds) return false;
-            ++RestoreCalls; Hidden = false; Events.Add("restore-arrow"); return true;
+            if (!OwnsPoint || !OwnAtMutation || !Hidden || !OwnShape || !HiddenAtRestore || !RestoreSucceeds) return false;
+            ++RestoreCalls; Hidden = OwnShape = false; Events.Add("restore-arrow"); return true;
         }
         public void HideSurface() { SurfaceVisible = false; Events.Add("hide-surface"); }
         public void DestroySurface() { ++DestroyCalls; SurfaceVisible = false; Events.Add("destroy-surface"); }

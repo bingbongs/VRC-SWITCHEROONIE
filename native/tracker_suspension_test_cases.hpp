@@ -171,7 +171,7 @@ void CompleteRigSpinAdmissionChecks()
                 request.bodySpinActive=1;request.bodySpinGeneration=100;
                 request.bodySpinQuaternion[0]=request.bodySpinQuaternion[3]=std::sqrt(.5);
                 vr::DriverPose_t out{};bool spin=false,suspended=false;
-                Check(router.RoutePose(0,request,true,now,frequency,out,&spin)&&spin,
+                Check(router.RoutePose(1,request,true,now,frequency,out,&spin)&&spin,
                       "fresh complete HMD/controller/GenericTracker rig admits spin in either mode");
                 const auto checkTime=invalidSource?now+1:now+201000;
                 request.timestamp=request.bodySpinLeaseQpc=checkTime;
@@ -199,7 +199,7 @@ void CompleteRigSpinAdmissionChecks()
                 Check(!router.BodySpinPermitted(inactive,true,checkTime,frequency),
                       "inactive retained generation retires rather than erases its refused tombstone");
                 ++request.bodySpinGeneration;
-                Check(router.RoutePose(0,request,true,checkTime,frequency,out,&spin)&&spin,
+                Check(router.RoutePose(1,request,true,checkTime,frequency,out,&spin)&&spin,
                       "a greater explicit activation token admits the restored complete rig");
                 Check(!router.BodySpinPermitted(inactive,true,checkTime,frequency)&&
                       router.BodySpinPermitted(request,true,checkTime,frequency),
@@ -227,7 +227,7 @@ void CompleteRigSpinAdmissionChecks()
     active.bodySpinActive=1;active.bodySpinGeneration=100;
     active.bodySpinQuaternion[0]=1;
     vr::DriverPose_t output{};
-    Check(concurrent.RoutePose(0,active,true,now,frequency,output),
+    Check(concurrent.RoutePose(1,active,true,now,frequency,output),
           "concurrent refusal fixture first proves its complete rig activation is admitted");
     auto cancelled=active;cancelled.bodySpinActive=0;
     std::atomic<bool> begin{};std::vector<std::thread> threads;
@@ -251,7 +251,7 @@ void CompleteRigSpinAdmissionChecks()
           concurrent.SpinBlockReason(active,true,now,frequency)==sw::BodySpinBlockReason::StalePhysicalRig,
           "concurrent cancellation and recovered invalid capture cannot lose the refusal tombstone");
     ++active.bodySpinGeneration;
-    Check(concurrent.RoutePose(0,active,true,now,frequency,output),
+    Check(concurrent.RoutePose(1,active,true,now,frequency,output),
           "a fresh explicit token after concurrent refusal restores safe complete-rig admission");
 
     sw::PoseStore store;

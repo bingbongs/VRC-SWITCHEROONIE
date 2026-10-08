@@ -15,6 +15,19 @@
     </Grid>
     <ScrollViewer x:Name="MainScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,8,0" ScrollChanged="Settings_ScrollChanged">
       <StackPanel>
+        <Border x:Name="SetupCard" Style="{StaticResource Card}" Padding="16">
+          <Expander x:Name="SetupExpander" Header="SteamVR setup">
+            <StackPanel Margin="0,12,0,0">
+              <TextBlock x:Name="SetupStatusText" Text="Setup has not been checked yet" FontSize="12"/>
+              <TextBlock Text="Installs Switcheroonie for this Windows user. No games or runtimes are started or closed." Foreground="{StaticResource Muted}" FontSize="11" Margin="0,9,0,0"/>
+              <WrapPanel Margin="0,12,0,0">
+                <Button x:Name="RunSetupButton" Content="Set up SteamVR" Click="RunSetup_Click" IsEnabled="False" Padding="12,7" Margin="0,0,8,0"/>
+                <Button x:Name="CheckSetupButton" Content="Check again" Click="CheckSetup_Click" Padding="12,7"/>
+                <Button x:Name="SetupUpdateButton" Content="Check for updates" Click="SetupUpdate_Click" Visibility="Collapsed" Padding="12,7" Margin="8,0,0,0"/>
+              </WrapPanel>
+            </StackPanel>
+          </Expander>
+        </Border>
         <Border Style="{StaticResource Card}" Padding="16">
           <StackPanel>
             <TextBlock Text="Switching &amp; startup" FontSize="16" FontWeight="SemiBold"/>
