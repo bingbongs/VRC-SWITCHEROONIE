@@ -1,6 +1,6 @@
 # Current limits
 
-Version0.2.0 is an experimental Windows/SteamVR app. Software checks and rendered previews are separate from in-headset and VRChat behavior.
+Version 0.2.1 is an experimental Windows/SteamVR app. Software checks and rendered previews are separate from in-headset and VRChat behavior. Version 0.2.0 had a Settings-opening crash; use 0.2.1 or newer.
 
 - **New controls need a live check:** hidden look cursor, toggle crouch/prone, M/Esc menu closure, left-hand menu angle and natural resting wrists.
 - **speeeeeeen is experimental:** the transform includes the headset, controllers and generic trackers. Avatar root behavior, VRChat IK, full-body calibration and changing-transform prediction require hardware testing. It may cause motion sickness.

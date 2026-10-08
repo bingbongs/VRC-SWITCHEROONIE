@@ -117,6 +117,93 @@ try
     using (var service = new UpdateService(Path.Combine(fixtureRoot, "redirect-http"), trust, handler, new Safety(true)))
         Check((await service.CheckAndStageAsync()).State == "Unavailable", "foreign redirect refused");
     var interrupted = new VersionStore(Path.Combine(fixtureRoot, "interrupted"));
+    var originStore = new VersionStore(Path.Combine(fixtureRoot, "first-21-origin"));
+    string original21 = Path.Combine(fixtureRoot, "original-21"), later22 = Path.Combine(fixtureRoot, "later-22");
+    Directory.CreateDirectory(original21); Directory.CreateDirectory(later22);
+    using (originStore.AcquireLock())
+    {
+        originStore.RememberBootstrap(original21, "0.2.1");
+        await originStore.StageBootstrapAsync(new MemoryStream(baseline.Archive), baseline.Manifest, baseline.ManifestBytes, baseline.Signature, trust);
+        await originStore.StageOriginAsync(new MemoryStream(first.Archive), first.Manifest, first.ManifestBytes, first.Signature, trust);
+        Check(originStore.Current is null && originStore.PendingVersion is null && originStore.HighestSequence == 0,
+            "original2.1 signed receipt retention never selects or advances feed state");
+        foreach (var item in first.Manifest.Files)
+        {
+            string destination = Path.Combine(original21, item.Path.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Copy(Path.Combine(originStore.PayloadDirectory(first.Manifest.Version), item.Path.Replace('/', Path.DirectorySeparatorChar)), destination);
+        }
+        originStore.RememberBootstrap(later22, "0.2.2");
+        Check(originStore.RememberedBootstrapVersion(trust) == "0.2.1", "later launcher preserves first recorded release origin");
+        await originStore.StageAsync(new MemoryStream(second.Archive), second.Manifest, second.ManifestBytes, second.Signature, trust);
+        Check(originStore.Activate(trust, new Safety(true)).State == "Activated" && originStore.Current?.PreviousVersion == "0.2.1",
+            "fresh2.1 user updates2.2 with exact signed original rollback target");
+    }
+    Check(originStore.ResolveStableLauncher(originStore.PayloadDirectory("0.2.2"), trust) == Path.Combine(original21, "VRC-SWITCHEROONIE.exe"),
+        "fresh2.1 origin resolves after2.2 against original signed2.1 inventory");
+    Check(originStore.ResolveStableLauncher(later22, trust) is null, "unselected UI path cannot resolve authority");
+    File.AppendAllText(Path.Combine(original21, "Switcheroonie.Common.dll"), "changed");
+    Refused(() => originStore.ResolveStableLauncher(originStore.PayloadDirectory("0.2.2"), trust), "changed origin dependency fails complete signed verification");
+    File.Copy(Path.Combine(originStore.PayloadDirectory("0.2.1"), "Switcheroonie.Common.dll"), Path.Combine(original21, "Switcheroonie.Common.dll"), true);
+    string savedOriginMetadata = File.ReadAllText(Path.Combine(originStore.Root, "bootstrap.json"));
+    File.WriteAllText(Path.Combine(originStore.Root, "bootstrap.json"), JsonSerializer.Serialize(new { directory = original21, version = "0.2.0" }));
+    Refused(() => originStore.ResolveStableLauncher(originStore.PayloadDirectory("0.2.2"), trust), "altered remembered version fails original bytes verification");
+    File.WriteAllText(Path.Combine(originStore.Root, "bootstrap.json"), JsonSerializer.Serialize(new { directory = original21, version = "99.0.0" }));
+    Refused(() => originStore.ResolveStableLauncher(originStore.PayloadDirectory("0.2.2"), trust), "unknown numeric origin version fails closed");
+    File.WriteAllText(Path.Combine(originStore.Root, "bootstrap.json"), JsonSerializer.Serialize(new { directory = original21, version = "../0.2.1" }));
+    Refused(() => originStore.ResolveStableLauncher(originStore.PayloadDirectory("0.2.2"), trust), "nonnumeric origin version fails closed");
+    File.WriteAllText(Path.Combine(originStore.Root, "bootstrap.json"), savedOriginMetadata);
+    var legacyOriginStore = new VersionStore(Path.Combine(fixtureRoot, "legacy-origin"));
+    string original20 = Path.Combine(fixtureRoot, "original-20"); Directory.CreateDirectory(original20);
+    using (legacyOriginStore.AcquireLock())
+    {
+        File.WriteAllText(Path.Combine(legacyOriginStore.Root, "bootstrap.json"), JsonSerializer.Serialize(new { directory = original20 }));
+        legacyOriginStore.RememberBootstrap(later22, "0.2.2");
+        Check(legacyOriginStore.RememberedBootstrapVersion(trust) == "0.2.0", "legacy unversioned origin retains baseline interpretation");
+        await legacyOriginStore.StageBootstrapAsync(new MemoryStream(baseline.Archive), baseline.Manifest, baseline.ManifestBytes, baseline.Signature, trust);
+        foreach (var item in baseline.Manifest.Files)
+        {
+            string destination = Path.Combine(original20, item.Path.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Copy(Path.Combine(legacyOriginStore.PayloadDirectory("0.2.0"), item.Path.Replace('/', Path.DirectorySeparatorChar)), destination);
+        }
+        await legacyOriginStore.StageAsync(new MemoryStream(first.Archive), first.Manifest, first.ManifestBytes, first.Signature, trust);
+        legacyOriginStore.Activate(trust, new Safety(true));
+    }
+    Check(legacyOriginStore.ResolveStableLauncher(legacyOriginStore.PayloadDirectory("0.2.1"), trust) == Path.Combine(original20, "VRC-SWITCHEROONIE.exe"),
+        "legacy2.0 origin resolves after versioned update");
+    var missingOriginStore = new VersionStore(Path.Combine(fixtureRoot, "missing-origin"));
+    using (missingOriginStore.AcquireLock())
+    {
+        string missing = Path.Combine(fixtureRoot, "missing-original-directory");
+        File.WriteAllText(Path.Combine(missingOriginStore.Root, "bootstrap.json"), JsonSerializer.Serialize(new { directory = missing, version = "0.2.1" }));
+        missingOriginStore.RememberBootstrap(later22, "0.2.2");
+        Check(File.ReadAllText(Path.Combine(missingOriginStore.Root, "bootstrap.json")).Contains(missing.Replace("\\", "\\\\")),
+            "missing original path is preserved rather than silently replaced");
+    }
+    string originHttpRoot = Path.Combine(fixtureRoot, "origin-http");
+    var originHttpStore = new VersionStore(originHttpRoot);
+    using (originHttpStore.AcquireLock()) originHttpStore.RememberBootstrap(original21, "0.2.1");
+    using (var handler = new FakeHttp(second, trust, baseline, first))
+    using (var service = new UpdateService(originHttpRoot, trust, handler, new Safety(true)))
+    {
+        Check((await service.CheckAndStageAsync()).State == "Staged" && handler.ZipDownloads == 3,
+            "first2.1-to2.2 HTTP flow retains signed floor and original receipts before candidate");
+        Check(originHttpStore.VerifyVersion("0.2.0", trust).Version == "0.2.0" &&
+            originHttpStore.VerifyVersion("0.2.1", trust).Version == "0.2.1" && originHttpStore.HighestSequence == 3,
+            "origin retention preserves delivery floor and candidate high-water");
+        Check(service.TryActivate().State == "Activated" && originHttpStore.Current?.PreviousVersion == "0.2.1",
+            "HTTP staged first update retains actual2.1 rollback");
+        Check(service.ResolveStableLauncher(originHttpStore.PayloadDirectory("0.2.2")) == Path.Combine(original21, "VRC-SWITCHEROONIE.exe"),
+            "service resolves independently signed actual origin after first update");
+    }
+    string compiledOriginRoot = Path.Combine(fixtureRoot, "compiled-origin");
+    using (var service = new UpdateService(compiledOriginRoot, trust, new FakeHttp(first, trust, baseline), new Safety(false)))
+        service.RememberBootstrap(original21);
+    var compiledVersion = typeof(UpdateService).Assembly.GetName().Version!;
+    Check(new VersionStore(compiledOriginRoot).RememberedBootstrapVersion(trust) ==
+        $"{compiledVersion.Major}.{compiledVersion.Minor}.{compiledVersion.Build}",
+        "production service records its actual compiled release version");
     using (interrupted.AcquireLock())
     {
         await interrupted.StageBootstrapAsync(new MemoryStream(baseline.Archive), baseline.Manifest, baseline.ManifestBytes, baseline.Signature, trust);
@@ -271,7 +358,7 @@ sealed record Fixture(ReleaseManifest Manifest, byte[] ManifestBytes, byte[] Sig
         ManifestVerifier.Verify(bytes, key.SignData(bytes, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation), trust);
     }
 }
-sealed class FakeHttp(Fixture fixture, ReleaseTrust trust, Fixture baseline) : HttpMessageHandler
+sealed class FakeHttp(Fixture fixture, ReleaseTrust trust, Fixture baseline, Fixture? origin = null) : HttpMessageHandler
 {
     public bool BadSignature { get; init; } public bool EvilRedirect { get; init; } public int ZipDownloads { get; private set; }
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -279,6 +366,7 @@ sealed class FakeHttp(Fixture fixture, ReleaseTrust trust, Fixture baseline) : H
         if (EvilRedirect) { var redirect = new HttpResponseMessage(HttpStatusCode.Found); redirect.Headers.Location = new("https://evil.example/payload"); return Task.FromResult(redirect); }
         string path = request.RequestUri!.AbsolutePath;
         var selected = path.Contains("/v" + baseline.Manifest.Version + "/", StringComparison.Ordinal) || path.EndsWith("/tags/v" + baseline.Manifest.Version) ? baseline : fixture;
+        if (origin is not null && (path.Contains("/v" + origin.Manifest.Version + "/", StringComparison.Ordinal) || path.EndsWith("/tags/v" + origin.Manifest.Version))) selected = origin;
         byte[] bytes;
         if (path.EndsWith("/latest") || path.Contains("/tags/"))
         {

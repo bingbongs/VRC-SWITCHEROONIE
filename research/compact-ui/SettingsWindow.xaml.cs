@@ -26,6 +26,7 @@ public partial class SettingsWindow : Window
     private readonly bool _preview;
     private readonly SpinStarfishView _spinIcon;
     private bool _updatingSpin, _spinCommandPending;
+    private bool _spinAnimationAllowed;
     internal bool Connected => _connected;
     internal HarnessStatus CurrentStatus => _status;
     internal string HotkeySummary => HotkeyText.Text;
@@ -105,11 +106,17 @@ public partial class SettingsWindow : Window
         IsVisibleChanged += (_, _) => UpdateSpinVisibility();
     }
 
-    private async void Window_Loaded(object sender, RoutedEventArgs e) => await InitializeResidentAsync();
+    private async void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        // IsVisibleChanged can precede template attachment. Re-evaluate once
+        // the shown settings visual tree has completed its first layout.
+        UpdateSpinVisibility();
+        if (!_preview) await InitializeResidentAsync();
+    }
 
     internal async Task InitializeResidentAsync()
     {
-        if (_residentInitialized) return;
+        if (_preview || _residentInitialized) return;
         _residentInitialized = true;
         _window = new WindowInteropHelper(this).EnsureHandle();
         _windowSource = HwndSource.FromHwnd(_window);
@@ -525,15 +532,21 @@ public partial class SettingsWindow : Window
     private void Settings_DpiChanged(object sender, DpiChangedEventArgs e) => _spinIcon?.SetDpi(e.NewDpi.PixelsPerInchX);
     private void Settings_ScrollChanged(object sender, ScrollChangedEventArgs e) => UpdateSpinVisibility();
     private void UpdateSpinVisibility()
+        => UpdateSpinVisibility(IsVisible && WindowState != WindowState.Minimized);
+    private void UpdateSpinVisibility(bool ownerVisible, bool fixture = false)
     {
-        if (_spinIcon is null || SpinIconHost is null || MainScroll is null) return;
-        bool visible = IsVisible && WindowState != WindowState.Minimized;
-        if (visible)
-        {
-            var bounds = SpinIconHost.TransformToAncestor(MainScroll).TransformBounds(new Rect(SpinIconHost.RenderSize));
-            visible = bounds.IntersectsWith(new Rect(0, 0, MainScroll.ViewportWidth, MainScroll.ViewportHeight));
-        }
-        _spinIcon.SetAnimationActive(visible);
+        if (_spinIcon is null || SpinIconHost is null || MainScroll is null) { _spinAnimationAllowed = false; return; }
+        _spinAnimationAllowed = SpinViewportVisibility.Allows(ownerVisible, SpinIconHost, MainScroll,
+            fixture && _preview ? SpinIconHost.Visibility == Visibility.Visible : null);
+        _spinIcon.SetAnimationActive(_spinAnimationAllowed);
+    }
+    internal bool SpinVisibilityFixture(bool ownerVisible, bool minimized = false)
+    {
+        if (!_preview) throw new InvalidOperationException("Offscreen fixture only");
+        // Detached visuals have no PresentationSource, so only presentation
+        // flags are simulated. Ancestry, layout and scrolling remain real WPF.
+        UpdateSpinVisibility(ownerVisible && !minimized, fixture: true);
+        return _spinAnimationAllowed;
     }
 
     private async void Spin_Click(object sender, RoutedEventArgs e)
@@ -859,7 +872,7 @@ public partial class SettingsWindow : Window
                 timestampUtc = DateTime.UtcNow,
                 brokerResponding = _connected,
                 status = _connected ? _status : null,
-                uiVersion = "0.2.0",
+                uiVersion = "0.2.1",
                 hardwareTests = "Not performed by this panel; consult the evidence reports.",
                 shortcuts = new { toggleRegistered = _toggleHotkey, releaseRegistered = _releaseHotkey }
             };

@@ -17,7 +17,7 @@ public sealed class UpdateService : IDisposable
         store = new(storeRoot ?? Path.Combine(StatePaths.Current.DataDirectory, "updates"));
         http = new(handler ?? new HttpClientHandler { AllowAutoRedirect = false });
         http.Timeout = TimeSpan.FromMinutes(5);
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("VRC-SWITCHEROONIE-Updater/0.2.0");
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("VRC-SWITCHEROONIE-Updater/0.2.1");
         http.DefaultRequestHeaders.Accept.Add(new("application/vnd.github+json"));
         http.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
         this.safety = safety ?? new WindowsUpdateSafety();
@@ -58,7 +58,8 @@ public sealed class UpdateService : IDisposable
             string tag = root.GetProperty("tag_name").GetString() ?? "";
             if (!tag.StartsWith('v')) throw new InvalidDataException("Release tag is invalid.");
             string version = tag[1..]; ReleaseTrust.ParseVersion(version);
-            if (ReleaseTrust.ParseVersion(version) <= ReleaseTrust.ParseVersion(store.Current?.Version ?? policy.BaselineVersion))
+            string originVersion = store.RememberedBootstrapVersion(policy) ?? policy.BaselineVersion;
+            if (ReleaseTrust.ParseVersion(version) <= ReleaseTrust.ParseVersion(store.Current?.Version ?? originVersion))
                 return new("Current", "This portable version is current.");
             // Keep a real signed first-release rollback, even when the initial portable package has no selection pointer.
             if (store.Current is null && !Directory.Exists(store.VersionDirectory(policy.BaselineVersion)))
@@ -69,6 +70,17 @@ public sealed class UpdateService : IDisposable
                 await DownloadReleaseAsync(baseline.RootElement, policy.BaselineVersion, policy, true, cancellationToken);
             }
             if (store.Current is null) store.VerifyVersion(policy.BaselineVersion, policy);
+            if (ReleaseTrust.ParseVersion(originVersion) > ReleaseTrust.ParseVersion(version))
+                throw new InvalidDataException("Original launcher version exceeds the candidate.");
+            if (store.Current is null && originVersion != policy.BaselineVersion &&
+                !Directory.Exists(store.VersionDirectory(originVersion)))
+            {
+                using var originResponse = await GetAsync(new($"https://api.github.com/repos/{policy.Repository}/releases/tags/v{originVersion}"), cancellationToken);
+                originResponse.EnsureSuccessStatusCode();
+                using var origin = JsonDocument.Parse(await ReadBoundedAsync(originResponse.Content, 2 * 1024 * 1024, cancellationToken));
+                await DownloadReleaseAsync(origin.RootElement, originVersion, policy, true, cancellationToken, true);
+            }
+            if (store.Current is null && originVersion != policy.BaselineVersion) store.VerifyVersion(originVersion, policy);
             await DownloadReleaseAsync(root, version, policy, false, cancellationToken);
             return new("Staged", "Signed update downloaded. Your current session continues; activation waits for normal shutdown.", version, true, true);
         }
@@ -78,7 +90,8 @@ public sealed class UpdateService : IDisposable
             System.Security.Cryptography.CryptographicException or ArgumentException or InvalidOperationException)
         { return new("Unavailable", "No trusted update could be staged; the running version is unchanged."); }
     }
-    async Task DownloadReleaseAsync(JsonElement root, string version, ReleaseTrust policy, bool bootstrap, CancellationToken cancellationToken)
+    async Task DownloadReleaseAsync(JsonElement root, string version, ReleaseTrust policy, bool bootstrap, CancellationToken cancellationToken,
+        bool originReceipt = false)
     {
             string tag = "v" + version;
             if (root.GetProperty("draft").GetBoolean() || root.GetProperty("prerelease").GetBoolean() ||
@@ -110,7 +123,8 @@ public sealed class UpdateService : IDisposable
             if (archiveResponse.Content.Headers.ContentLength is long length && length != manifest.ArchiveBytes)
                 throw new InvalidDataException("Archive response size disagrees with signed manifest.");
             await using var archive = await archiveResponse.Content.ReadAsStreamAsync(cancellationToken);
-            if (bootstrap) await store.StageBootstrapAsync(archive, manifest, bytes, signature, policy, cancellationToken);
+            if (originReceipt) await store.StageOriginAsync(archive, manifest, bytes, signature, policy, cancellationToken);
+            else if (bootstrap) await store.StageBootstrapAsync(archive, manifest, bytes, signature, policy, cancellationToken);
             else await store.StageAsync(archive, manifest, bytes, signature, policy, cancellationToken);
     }
     async Task<HttpResponseMessage> GetAsync(Uri initial, CancellationToken token)
@@ -164,7 +178,11 @@ public sealed class UpdateService : IDisposable
         return Path.Combine(store.PayloadDirectory(current.Version), "Switcheroonie.UI.exe");
     }
     public void RememberBootstrap(string directory)
-    { using var updateLock = store.AcquireLock(); store.RememberBootstrap(directory); }
+    {
+        using var updateLock = store.AcquireLock();
+        var version = typeof(UpdateService).Assembly.GetName().Version ?? throw new InvalidDataException("Compiled release version is unavailable.");
+        store.RememberBootstrap(directory, $"{version.Major}.{version.Minor}.{version.Build}");
+    }
     public string? ResolveStableLauncher(string currentUiDirectory)
     { try { return store.ResolveStableLauncher(currentUiDirectory, Trust); } catch { return null; } }
     public void Dispose() => http.Dispose();

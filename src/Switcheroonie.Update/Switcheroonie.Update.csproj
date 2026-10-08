@@ -2,7 +2,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework><ApplicationManifest>app.manifest</ApplicationManifest>
     <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
-    <AssemblyName>Switcheroonie.Updater</AssemblyName><Version>0.2.0</Version>
+    <AssemblyName>Switcheroonie.Updater</AssemblyName><Version>0.2.1</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Switcheroonie.Common/Switcheroonie.Common.csproj" />

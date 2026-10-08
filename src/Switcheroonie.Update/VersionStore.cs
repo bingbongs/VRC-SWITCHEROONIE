@@ -13,7 +13,7 @@ public sealed class VersionStore
     sealed record Pending(string Version);
     sealed record HighWater(long Sequence);
     sealed record Transition(string Version, string? PreviousVersion, string Kind);
-    sealed record Bootstrap(string Directory);
+    sealed record Bootstrap(string Directory, string? Version = null);
     public VersionStore(string root)
     {
         if (!Path.IsPathFullyQualified(root)) throw new ArgumentException("Update store must be absolute.");
@@ -97,8 +97,12 @@ public sealed class VersionStore
     public async Task StageBootstrapAsync(Stream archiveStream, ReleaseManifest manifest, byte[] manifestBytes, byte[] signature,
         ReleaseTrust trust, CancellationToken cancellationToken = default) =>
         await StageCoreAsync(archiveStream, manifest, manifestBytes, signature, trust, true, cancellationToken);
+    public async Task StageOriginAsync(Stream archiveStream, ReleaseManifest manifest, byte[] manifestBytes, byte[] signature,
+        ReleaseTrust trust, CancellationToken cancellationToken = default) =>
+        await StageCoreAsync(archiveStream, manifest, manifestBytes, signature, trust, true, cancellationToken,
+            RememberedBootstrapVersion(trust) ?? throw new InvalidDataException("No original launcher is recorded."));
     async Task StageCoreAsync(Stream archiveStream, ReleaseManifest manifest, byte[] manifestBytes, byte[] signature,
-        ReleaseTrust trust, bool bootstrap, CancellationToken cancellationToken)
+        ReleaseTrust trust, bool bootstrap, CancellationToken cancellationToken, string? originReceiptVersion = null)
     {
         var verified = ManifestVerifier.Verify(manifestBytes, signature, trust);
         if (verified.Version != manifest.Version || verified.ArchiveSha256 != manifest.ArchiveSha256)
@@ -106,9 +110,13 @@ public sealed class VersionStore
         manifest = verified;
         long baselineSequence = !bootstrap && Current is null && Directory.Exists(VersionDirectory(trust.BaselineVersion))
             ? VerifyVersion(trust.BaselineVersion, trust).Sequence : 0;
-        if (bootstrap ? manifest.Version != trust.BaselineVersion || Current is not null :
-            ReleaseTrust.ParseVersion(manifest.Version) <= ReleaseTrust.ParseVersion(Current?.Version ?? trust.BaselineVersion) ||
-            manifest.Sequence <= Math.Max(HighestSequence, baselineSequence))
+        string? originVersion = !bootstrap && Current is null ? RememberedBootstrapVersion(trust) : null;
+        long originSequence = originVersion is not null && Directory.Exists(VersionDirectory(originVersion))
+            ? VerifyVersion(originVersion, trust).Sequence : 0;
+        if (bootstrap ? manifest.Version != (originReceiptVersion ?? trust.BaselineVersion) ||
+                (originReceiptVersion is null && Current is not null) :
+            ReleaseTrust.ParseVersion(manifest.Version) <= ReleaseTrust.ParseVersion(Current?.Version ?? originVersion ?? trust.BaselineVersion) ||
+            manifest.Sequence <= Math.Max(HighestSequence, Math.Max(baselineSequence, originSequence)))
             throw new InvalidDataException("Older, repeated or downgrade releases are refused.");
         string cachedVersion = VersionDirectory(manifest.Version);
         if (Directory.Exists(cachedVersion))
@@ -222,10 +230,10 @@ public sealed class VersionStore
         if (pending is null) return new("Current", "No verified update is pending.");
         if (!safety.CanActivate()) return new("Deferred", "Downloaded; activation waits for normal app and SteamVR shutdown.", pending, true, true);
         var manifest = VerifyVersion(pending, trust); var previous = Current;
-        if (ReleaseTrust.ParseVersion(pending) <= ReleaseTrust.ParseVersion(previous?.Version ?? trust.BaselineVersion))
+        if (ReleaseTrust.ParseVersion(pending) <= ReleaseTrust.ParseVersion(previous?.Version ?? RememberedBootstrapVersion(trust) ?? trust.BaselineVersion))
             throw new InvalidDataException("Pending activation is a downgrade.");
         if (!safety.CanActivate()) return new("Deferred", "Application activity changed; update remains staged.", pending, true, true);
-        string rollbackVersion = previous?.Version ?? trust.BaselineVersion;
+        string rollbackVersion = previous?.Version ?? RememberedBootstrapVersion(trust) ?? trust.BaselineVersion;
         VerifyVersion(rollbackVersion, trust);
         var transition = new Transition(pending, rollbackVersion, "Activate");
         WriteJson("transition.json", transition);
@@ -260,11 +268,39 @@ public sealed class VersionStore
         File.Delete(Path.Combine(Root, "transition.json"));
         return new(transition.Kind == "Activate" ? "Activated" : "RolledBack", "Matched signed portable version and owned driver selected.", transition.Version);
     }
-    public void RememberBootstrap(string directory)
+    public void RememberBootstrap(string directory, string version = ReleaseTrust.BootstrapVersion)
     {
+        ReleaseTrust.ParseVersion(version);
         directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory)); AssertNoReparse(directory);
-        // The path alone never grants authority. ResolveStableLauncher requires the baseline signed inventory.
-        if (Current is null && !TransitionPending) WriteJson("bootstrap.json", new Bootstrap(directory));
+        // The path alone never grants authority. ResolveStableLauncher requires this origin's signed inventory.
+        if (Current is not null || TransitionPending) return;
+        var existing = ReadJson<Bootstrap>("bootstrap.json");
+        if (existing is not null)
+        {
+            ValidateBootstrap(existing, ReleaseTrust.BootstrapVersion);
+            return; // Never replace a remembered origin on a later launcher start.
+        }
+        if (!Directory.Exists(directory)) throw new IOException("Original portable directory is missing.");
+        WriteJson("bootstrap.json", new Bootstrap(directory, version));
+    }
+    static string ValidateBootstrap(Bootstrap bootstrap, string legacyVersion)
+    {
+        string version = bootstrap.Version ?? legacyVersion;
+        ReleaseTrust.ParseVersion(version);
+        if (!Path.IsPathFullyQualified(bootstrap.Directory)) throw new InvalidDataException("Original portable directory is not canonical.");
+        string canonical = Path.TrimEndingDirectorySeparator(Path.GetFullPath(bootstrap.Directory));
+        if (!canonical.Equals(bootstrap.Directory, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Original portable directory is not canonical.");
+        AssertNoReparse(canonical);
+        return version;
+    }
+    public string? RememberedBootstrapVersion(ReleaseTrust trust)
+    {
+        var bootstrap = ReadJson<Bootstrap>("bootstrap.json");
+        if (bootstrap is null) return null;
+        string version = ValidateBootstrap(bootstrap, trust.BaselineVersion);
+        if (ReleaseTrust.ParseVersion(version) < ReleaseTrust.ParseVersion(trust.BaselineVersion))
+            throw new InvalidDataException("Original portable version is below the delivery floor.");
+        return version;
     }
     public string? ResolveStableLauncher(string uiDirectory, ReleaseTrust trust)
     {
@@ -272,12 +308,16 @@ public sealed class VersionStore
         if (selected is null || TransitionPending ||
             !Path.GetFullPath(uiDirectory).TrimEnd(Path.DirectorySeparatorChar).Equals(PayloadDirectory(selected.Version), StringComparison.OrdinalIgnoreCase)) return null;
         VerifyVersion(selected.Version, trust);
-        var baseline = VerifyVersion(trust.BaselineVersion, trust);
         var location = ReadJson<Bootstrap>("bootstrap.json");
         if (location is null) return null;
-        VerifyPayload(location.Directory, baseline);
+        string originVersion = ValidateBootstrap(location, trust.BaselineVersion);
+        if (ReleaseTrust.ParseVersion(originVersion) < ReleaseTrust.ParseVersion(trust.BaselineVersion) ||
+            ReleaseTrust.ParseVersion(originVersion) > ReleaseTrust.ParseVersion(selected.Version))
+            throw new InvalidDataException("Original portable version is outside the selected release history.");
+        var origin = VerifyVersion(originVersion, trust);
+        VerifyPayload(location.Directory, origin);
         string launcher = Path.Combine(location.Directory, "VRC-SWITCHEROONIE.exe"); AssertNoReparse(launcher);
-        var item = baseline.Files.Single(x => x.Path == "VRC-SWITCHEROONIE.exe");
+        var item = origin.Files.Single(x => x.Path == "VRC-SWITCHEROONIE.exe");
         using var stream = File.OpenRead(launcher);
         return stream.Length == item.Bytes && ManifestVerifier.Sha256(stream).Equals(item.Sha256, StringComparison.OrdinalIgnoreCase) ? launcher : null;
     }
