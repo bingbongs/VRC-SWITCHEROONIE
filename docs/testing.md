@@ -10,15 +10,18 @@ Version 0.2.0 is experimental. Software tests and screenshots do not establish v
 | Compact panel, startup ownership and resident lifetime | 81 fixture checks passed |
 | Offscreen layout at 100/150/200% DPI and minimum size | 21 fixtures passed |
 | Installer journal, relocation and canonical state | 20 + 18 + 9 fixture checks passed |
-| Public broker/process integration for this candidate | Deferred while the existing app and SteamVR session are active |
+| Public broker/process integration | P01–P06 passed on fresh Windows CI; local packaged-process run waits for normal shutdown |
 | New cursor presentation, posture toggles, M/Esc menus and wrists in VRChat | Live retest pending |
 | Whole-avatar spinning, calibration and prediction | Live test pending |
-| Published update download and Windows sign-in | Separate acceptance tests pending |
+| Published update download and staging | Real GitHub download, signature and all 456 files verified in a private store |
+| Windows sign-in and live update activation/rollback | Separate acceptance tests pending |
 | Headset-free VRChat startup | Unsupported |
 
 The managed tests use private mappings and temporary configuration. They cover stale or missing source rejection, committed epochs, input ownership, shared menu state, posture continuity, short key presses, chat, focus loss, emergency release, cursor handoff and bounded spin. Native hook tests use an isolated fake host and input implementation. Update tests use temporary stores, fixture signing keys, fake HTTP and private driver/registration files. None of these tests launch VRChat or change the live headset session.
 
 The process harness starts only processes it owns. Public-pipe tests defer if a user broker or SteamVR runtime is active. A packaged-process run also checks that the broker loads its bundled .NET runtime.
+
+The public download check used the exact final updater with its embedded production key and a private simulated older selection. It staged signed release 0.2.0, sequence 1, and refused activation through its fixture safety gate. It changed no live driver, application or user configuration. This proves delivery and staging; it does not claim a live update or prior-version rollback.
 
 Screenshots are rendered offscreen with illustrative connection states. Their fixture branches do not connect to the broker, register hotkeys, capture input, write startup registration or download updates.
 

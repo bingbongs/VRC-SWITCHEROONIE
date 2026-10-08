@@ -32,7 +32,7 @@ The updater's --status, --check, --activate, and --rollback commands return stat
 
 The compact UI owns one UpdateService. CheckAndStageAsync runs outside rendering, its status is cached, and resident exit cancels/disposes it. ResolveStableLauncher returns the original launcher only after the selected payload and original bootstrap package match signed inventories. Uncertain managed startup is disabled; no registry value is silently replaced.
 
-Tests use in-memory signing keys, fake HTTP, temporary stores, and private driver/config/registration fixtures. They also test real DPAPI and a captured owned helper for lock exclusion. They do not run VRChat, load VR runtimes, modify live drivers, capture the cursor, or publish. A published-release round trip and Windows sign-in are separate live acceptance tests.
+Tests use in-memory signing keys, fake HTTP, temporary stores, and private driver/config/registration fixtures. They also test real DPAPI and a captured owned helper for lock exclusion. They do not run VRChat, load VR runtimes, modify live drivers or capture the cursor. After publication, the exact final updater downloaded signed release 0.2.0 from the real GitHub feed and verified all 456 files in a private store with a simulated older selection. Activation remained deferred. Windows sign-in and actual subsequent-version activation/rollback remain separate acceptance tests.
 
 ## Primary references
 
