@@ -64,6 +64,14 @@ enum class HandPreset : uint32_t
     LeftMenuNavigation = 3
 };
 inline constexpr uint32_t BodySpinCapability = 64u;
+inline constexpr uint32_t GenericTrackerSuspensionCapability = 128u;
+enum class BodySpinBlockReason : uint32_t
+{
+    None,
+    StalePhysicalRig,
+    DesktopRigIdentityChanged,
+    NativeAdmissionFault
+};
 struct alignas(8) Request
 {
     uint64_t sequence{};
@@ -107,9 +115,11 @@ struct alignas(8) Status
     uint32_t proximityKnown{}, proximityActive{};
     double leftPhysicalAgeMilliseconds{-1}, rightPhysicalAgeMilliseconds{-1};
     double proximityAgeMilliseconds{-1};
-    uint32_t bodySpinActive{}, bodySpinReserved{};
+    uint32_t bodySpinActive{}, bodySpinBlockReason{};
     uint64_t bodySpinGeneration{}, bodySpinSamples{};
-    std::byte reserved[200]{};
+    uint32_t genericTrackerAvailable{}, genericTrackerSuspended{};
+    uint64_t bodySpinAttemptGeneration{};
+    std::byte reserved[184]{};
 };
 static_assert(sizeof(Request) == 512 && sizeof(Status) == 512);
 static_assert(offsetof(Request, forward) == 88 && offsetof(Status, position) == 64 &&
@@ -134,7 +144,11 @@ static_assert(offsetof(Request, oscEnabled) == 104 && offsetof(Request, oscActio
               offsetof(Request, bodySpinQuaternion) == 152 && offsetof(Request, bodySpinPivot) == 184 &&
               offsetof(Request, bodySpinGeneration) == 208);
 static_assert(offsetof(Status, bodySpinActive) == 288 &&
+              offsetof(Status, bodySpinBlockReason) == 292 &&
               offsetof(Status, bodySpinGeneration) == 296 && offsetof(Status, bodySpinSamples) == 304);
+static_assert(offsetof(Status, genericTrackerAvailable) == 312 &&
+              offsetof(Status, genericTrackerSuspended) == 316);
+static_assert(offsetof(Status, bodySpinAttemptGeneration) == 320);
 static_assert(std::atomic_ref<uint64_t>::is_always_lock_free);
 
 // Interprocess protocol consists exclusively of aligned, atomic 64-bit words.

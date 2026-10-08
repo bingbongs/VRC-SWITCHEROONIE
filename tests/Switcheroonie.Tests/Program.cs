@@ -68,8 +68,13 @@ var runtime = Task.Run(async () =>
 {
     while (!cancellation.IsCancellationRequested)
     {
-        engine.Tick();
+        // Refresh both simulated producers before the broker reads them. A
+        // scheduling pause must not manufacture a stale HMD followed by a lost
+        // activation edge merely because this fixture refreshed after Tick.
         if (acknowledge) SetDriver(data.ReadUInt64(24), data.ReadUInt32(32) == 1);
+        // A one-shot helper heartbeat plus Task.Delay can expire under CI load.
+        channel.PublishOscWatchdog();
+        engine.Tick();
         await Task.Delay(5);
     }
 });
@@ -103,8 +108,14 @@ Check((await engine.ExecuteAsync(new() { Name = "ConfigureOsc", Osc = true, Dest
     "Private fixture enables OSC to verify separate native posture transport");
 gamePlatform.Set(new(Window: 17, Focused: true, ActivateClick: true)); await Task.Delay(30);
 channel.PublishOscWatchdog();
-gamePlatform.Set(new(Window: 17, Focused: true, Prone: true)); await Task.Delay(30);
-Check(data.ReadUInt32(84) == 64 && channel.ReadOscLease().Actions == 0,
+gamePlatform.Set(new(Window: 17, Focused: true, Prone: true));
+var postureDeadline = Stopwatch.StartNew();
+while (postureDeadline.ElapsedMilliseconds < 3000 &&
+    !(channel.OscWatchdogAlive && channel.Read().Alive && data.ReadUInt32(84) == 64 && channel.ReadOscLease() is { Fresh: true, Enabled: true, Armed: true }))
+    await Task.Delay(5);
+var postureLease = channel.ReadOscLease();
+Check(channel.OscWatchdogAlive && channel.Read().Alive && data.ReadUInt32(84) == 64 &&
+    postureLease is { Fresh: true, Enabled: true, Armed: true, Actions: 0 },
     "OSC movement leaves prone on the native pose path and out of OSC button actions");
 Check((await engine.ExecuteAsync(new() { Name = "ConfigureOsc", Osc = false })).Accepted,
     "Private posture test restores native movement transport");
@@ -190,6 +201,7 @@ AutomaticRoutingTests.Run(Check);
 HelperRestartPolicyTests.Run(Check);
 await AutomaticHarnessTests.RunAsync(Check);
 await ConcurrentRoutingTests.RunAsync(Check);
+await SpinHarnessTests.RunAsync(Check);
 var summary = new { category = "Automated + simulated runtime; no hardware claim", assertions, passed = true, dateUtc = DateTime.UtcNow };
 Console.WriteLine(JsonSerializer.Serialize(summary));
 

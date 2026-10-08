@@ -48,7 +48,9 @@ public sealed unsafe class SharedChannel : IDisposable
         var rotation = spinning ? spin!.Rotation : SpinQuaternion.Identity;
         Put(152, Bits(rotation.W)); Put(160, Bits(rotation.X)); Put(168, Bits(rotation.Y)); Put(176, Bits(rotation.Z));
         Put(184, Bits(spinning ? spin!.PivotX : 0)); Put(192, Bits(spinning ? spin!.PivotY : 0)); Put(200, Bits(spinning ? spin!.PivotZ : 0));
-        Put(208, spinning ? unchecked((long)spin!.Generation) : 0);
+        // Preserve the attempt identity on its inactive cancellation lease.
+        // Native admission can then retire that exact attempt before a new one.
+        Put(208, unchecked((long)(spin?.Generation ?? 0)));
         Put(0, previous + 2);
     }
     public OscLease ReadOscLease()
@@ -88,7 +90,7 @@ public sealed unsafe class SharedChannel : IDisposable
     }
     public DriverSnapshot Read()
     {
-        Span<long> words = stackalloc long[39];
+        Span<long> words = stackalloc long[41];
         for (int attempt = 0; attempt < 3; ++attempt)
         {
             long sequence = Get(2048);
@@ -98,6 +100,13 @@ public sealed unsafe class SharedChannel : IDisposable
             if ((uint)words[1] != Magic || (uint)(words[1] >> 32) != 1) return new();
             long elapsed = Stopwatch.GetTimestamp() - words[2];
             bool alive = elapsed >= 0 && elapsed < Stopwatch.Frequency / 2;
+            uint capabilities = (uint)(words[7] >> 32);
+            uint trackerAvailable = (capabilities & 128) != 0 ? (uint)words[39] : 0;
+            uint trackerSuspended = (capabilities & 128) != 0 ? (uint)(words[39] >> 32) : 0;
+            uint spinBlockReason = (capabilities & 128) != 0 ? (uint)(words[36] >> 32) : 0;
+            ulong spinAttemptGeneration = (capabilities & 128) != 0 ? unchecked((ulong)words[40]) : 0;
+            if (trackerAvailable > 64 || trackerSuspended > trackerAvailable)
+                trackerAvailable = trackerSuspended = 0;
             return new(alive, unchecked((ulong)words[3]), (uint)words[4] == 1, (uint)(words[4] >> 32),
                 BitConverter.Int64BitsToDouble(words[5]), (uint)words[6] != 0, (uint)(words[6] >> 32) != 0,
                 (uint)words[7] != 0, unchecked((ulong)words[15]), unchecked((ulong)words[16]), (uint)(words[7] >> 32),
@@ -107,7 +116,7 @@ public sealed unsafe class SharedChannel : IDisposable
                 BitConverter.Int64BitsToDouble(words[33]), BitConverter.Int64BitsToDouble(words[34]), BitConverter.Int64BitsToDouble(words[35]),
                 BitConverter.Int64BitsToDouble(words[8]), BitConverter.Int64BitsToDouble(words[9]), BitConverter.Int64BitsToDouble(words[10]),
                 BitConverter.Int64BitsToDouble(words[11]), BitConverter.Int64BitsToDouble(words[12]), BitConverter.Int64BitsToDouble(words[13]), BitConverter.Int64BitsToDouble(words[14]),
-                (uint)words[36] == 1, unchecked((ulong)words[37]), unchecked((ulong)words[38]));
+                (uint)words[36] == 1, unchecked((ulong)words[37]), unchecked((ulong)words[38]), trackerAvailable, trackerSuspended, spinBlockReason, spinAttemptGeneration);
         }
         return new();
     }
@@ -128,7 +137,8 @@ public readonly record struct DriverSnapshot(bool Alive = false, ulong Epoch = 0
     uint LastInputError = 0, uint EffectiveNativeActions = 0, bool InputArmed = false,
     bool ProximityKnown = false, bool ProximityActive = false, double LeftAge = -1, double RightAge = -1, double ProximityAge = -1,
     double HeadX = 0, double HeadY = 0, double HeadZ = 0, double HeadW = 0, double HeadQx = 0, double HeadQy = 0, double HeadQz = 0,
-    bool SpinActive = false, ulong SpinGeneration = 0, ulong SpinSamples = 0)
+    bool SpinActive = false, ulong SpinGeneration = 0, ulong SpinSamples = 0,
+    uint GenericTrackerAvailable = 0, uint GenericTrackerSuspended = 0, uint SpinBlockReason = 0, ulong SpinAttemptGeneration = 0)
 {
     public bool PhysicalPoseValid => Alive && HasHead && HeadAge is >= 0 and < 200 &&
         double.IsFinite(HeadX) && double.IsFinite(HeadY) && double.IsFinite(HeadZ) &&

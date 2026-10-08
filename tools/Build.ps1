@@ -1,5 +1,5 @@
-param([switch]$SkipTests, [switch]$FrameworkDependent, [string]$PackageName = 'VRC-SWITCHEROONIE-0.2.1',
-    [string]$NativeBuildDirectory = 'build/native-release-0.2.0')
+param([switch]$SkipTests, [switch]$FrameworkDependent, [string]$PackageName = 'VRC-SWITCHEROONIE-0.2.2',
+    [string]$NativeBuildDirectory = 'build/native-release-0.2.2')
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $nativeBuild = [IO.Path]::GetFullPath((Join-Path $repo $NativeBuildDirectory))

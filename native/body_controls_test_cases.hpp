@@ -208,8 +208,13 @@ void BodyControlsChecks()
           !router.GetStatus(request,true,request.timestamp,frequency).bodySpinActive,
           "fresh lease and body tracker cannot spin while the independent physical head is stale");
     router.Capture(0,original[0],request.timestamp);
+    router.Capture(1,original[1],request.timestamp);
+    router.Capture(2,original[2],request.timestamp);
+    Check(!router.RoutePose(3,request,true,request.timestamp,frequency,after),
+          "fresh complete rig recovery cannot resume a previously refused spin generation");
+    ++request.bodySpinGeneration;
     Check(router.RoutePose(3,request,true,request.timestamp,frequency,after),
-          "fresh independent physical head recovery re-enables the current separate spin lease");
+          "fresh complete rig and explicit new generation enable the separate spin lease");
     auto invalidHead=original[0];invalidHead.poseIsValid=false;
     router.Capture(0,invalidHead,request.timestamp);
     Check(!router.RoutePose(3,request,true,request.timestamp,frequency,after),
@@ -219,6 +224,8 @@ void BodyControlsChecks()
     Check(!router.RoutePose(3,request,true,request.timestamp,frequency,after),
           "loss of independently identified head role stops leased body transforms");
     router.SetRole(0,sw::DeviceRole::Head,100);router.SetBodySpinEligible(0,true);
+    router.Capture(0,original[0],request.timestamp);
+    ++request.bodySpinGeneration;
     auto oldEpoch=request;--oldEpoch.epoch;
     Check(!router.RoutePose(3,oldEpoch,true,request.timestamp,frequency,after)&&
           !router.GetStatus(oldEpoch,true,request.timestamp,frequency).bodySpinActive,
@@ -229,8 +236,12 @@ void BodyControlsChecks()
     Check(!router.BodySpinEligible(3)&&!router.RoutePose(3,request,true,request.timestamp,frequency,after),
           "replacement property container cannot inherit the old tracked-body eligibility");
     router.SetBodySpinEligible(3,true);
+    Check(!router.RoutePose(3,request,true,request.timestamp,frequency,after),
+          "replacement discovery alone cannot reuse the prior container's physical capture");
+    router.Capture(3,original[3],request.timestamp);
+    ++request.bodySpinGeneration;
     Check(router.RoutePose(3,request,true,request.timestamp,frequency,after),
-          "a complete new discovery can approve the replacement physical tracker identity");
+          "new discovery plus its own fresh capture can approve the replacement physical tracker identity");
     router.SetBodySpinEligible(3,false);
     Check(!router.RoutePose(3,request,true,request.timestamp,frequency,after),"device eligibility loss immediately refuses body spin");
     request.bodySpinActive=0;

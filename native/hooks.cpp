@@ -564,7 +564,8 @@ void HookRuntime::RoutePoseCall(void *self, uint32_t index, const vr::DriverPose
     bool read = ReadRequest(r);
     vr::DriverPose_t routed{};
     bool spinApplied = false;
-    if (router_.RoutePose(index, r, read, QpcNow(), frequency_, routed, &spinApplied))
+    bool trackerSuspended = false;
+    if (router_.RoutePose(index, r, read, QpcNow(), frequency_, routed, &spinApplied, &trackerSuspended))
     {
         original(self, index, routed, sizeof(routed));
         if (index < vr::k_unMaxTrackedDeviceCount)
@@ -576,6 +577,10 @@ void HookRuntime::RoutePoseCall(void *self, uint32_t index, const vr::DriverPose
             }
             else
                 spunDevices_.fetch_and(~(uint64_t(1) << index), std::memory_order_acq_rel);
+            if (trackerSuspended)
+                suspendedDevices_.fetch_or(uint64_t(1) << index, std::memory_order_acq_rel);
+            else
+                suspendedDevices_.fetch_and(~(uint64_t(1) << index), std::memory_order_acq_rel);
         }
         router_.RecordSynthetic(index, routed, r.epoch, QpcNow());
         router_.CountRouted();
@@ -584,7 +589,10 @@ void HookRuntime::RoutePoseCall(void *self, uint32_t index, const vr::DriverPose
     {
         original(self, index, pose, size);
         if (index < vr::k_unMaxTrackedDeviceCount)
+        {
             spunDevices_.fetch_and(~(uint64_t(1) << index), std::memory_order_acq_rel);
+            suspendedDevices_.fetch_and(~(uint64_t(1) << index), std::memory_order_acq_rel);
+        }
     }
 }
 void HookRuntime::Submit(uint32_t index, const vr::DriverPose_t &p) noexcept
@@ -598,16 +606,17 @@ void HookRuntime::Submit(uint32_t index, const vr::DriverPose_t &p) noexcept
         return;
     SubmitInternal(index, p, request.epoch);
 }
-void HookRuntime::SubmitInternal(uint32_t index, const vr::DriverPose_t &p, uint64_t epoch) noexcept
+bool HookRuntime::SubmitInternal(uint32_t index, const vr::DriverPose_t &p, uint64_t epoch) noexcept
 {
     if (index >= poseHosts_.size())
-        return;
+        return false;
     auto *owner = poseHosts_[index].load(std::memory_order_acquire);
     if (!owner)
-        return; // A role/property alone does not supply a vendor-owned host context.
+        return false; // A role/property alone does not supply a vendor-owned host context.
     reinterpret_cast<PoseFn>(original_[0])(owner, index, p, sizeof(p));
     router_.RecordSynthetic(index, p, epoch, QpcNow());
     router_.CountRouted();
+    return true;
 }
 void HookRuntime::Tick(int64_t now) noexcept
 {
@@ -653,19 +662,23 @@ void HookRuntime::TickInternal(int64_t now) noexcept
     if (menuHandle != menuHandle_.load(std::memory_order_acquire))
         menuPressed_.store(false, std::memory_order_release);
     menuHandle_.store(menuHandle, std::memory_order_release);
-    if (desktop || spin || spunDevices_.load(std::memory_order_acquire))
+    if (desktop || spin || spunDevices_.load(std::memory_order_acquire) ||
+        suspendedDevices_.load(std::memory_order_acquire))
         for (uint32_t i = 0; i < vr::k_unMaxTrackedDeviceCount; ++i)
         {
             const auto bit = uint64_t(1) << i;
             const bool wasSpun = (spunDevices_.load(std::memory_order_acquire) & bit) != 0;
-            if (!wasSpun && !spin && (!desktop || router_.Role(i) == DeviceRole::Other))
+            const bool wasSuspended = (suspendedDevices_.load(std::memory_order_acquire) & bit) != 0;
+            if (!wasSpun && !wasSuspended && !spin &&
+                (!desktop || (router_.Role(i) == DeviceRole::Other && !router_.GenericTracker(i))))
                 continue;
             vr::DriverPose_t pose{};
             bool spinApplied = false;
+            bool trackerSuspended = false;
             if (!stoppingForeign_.load(std::memory_order_acquire) && (desktop || spin) &&
-                router_.RoutePose(i, r, true, std::max(now, QpcNow()), frequency_, pose, &spinApplied))
+                router_.RoutePose(i, r, true, std::max(now, QpcNow()), frequency_, pose, &spinApplied, &trackerSuspended))
             {
-                SubmitInternal(i, pose, r.epoch);
+                if (!SubmitInternal(i, pose, r.epoch)) continue;
                 if (spinApplied)
                 {
                     spunDevices_.fetch_or(bit, std::memory_order_acq_rel);
@@ -673,13 +686,21 @@ void HookRuntime::TickInternal(int64_t now) noexcept
                 }
                 else
                     spunDevices_.fetch_and(~bit, std::memory_order_acq_rel);
+                if (trackerSuspended)
+                    suspendedDevices_.fetch_or(bit, std::memory_order_acq_rel);
+                else
+                    suspendedDevices_.fetch_and(~bit, std::memory_order_acq_rel);
             }
-            else if (wasSpun && router_.OriginalForRestore(i, std::max(now, QpcNow()), frequency_, pose))
+            else if ((wasSpun || wasSuspended) &&
+                     router_.OriginalForRestore(i, std::max(now, QpcNow()), frequency_, pose))
             {
                 // Lease release restores the captured original even without a new
                 // vendor callback. Old captures are marked invalid, never fresh.
-                SubmitInternal(i, pose, r.epoch);
-                spunDevices_.fetch_and(~bit, std::memory_order_acq_rel);
+                if (SubmitInternal(i, pose, r.epoch))
+                {
+                    spunDevices_.fetch_and(~bit, std::memory_order_acq_rel);
+                    suspendedDevices_.fetch_and(~bit, std::memory_order_acq_rel);
+                }
             }
         }
     for (auto &c : components_)
@@ -741,6 +762,15 @@ Status HookRuntime::StatusNow(int64_t now) noexcept
     Request r{};
     bool read = ReadRequest(r);
     auto status = router_.GetStatus(r, read, now, frequency_);
+    const auto suspended = suspendedDevices_.load(std::memory_order_acquire);
+    for (uint32_t index = 0; index < vr::k_unMaxTrackedDeviceCount; ++index)
+    {
+        PoseSnapshot source{};
+        if ((suspended & (uint64_t(1) << index)) && router_.GenericTrackerPhysical(index, source))
+            ++status.genericTrackerSuspended;
+    }
+    status.genericTrackerSuspended = std::min(status.genericTrackerSuspended,
+                                              status.genericTrackerAvailable);
     bool left = false, right = false, menu = false, proximity = false;
     uint32_t proximityCount = 0;
     uint64_t rawProximity = 0;
@@ -806,14 +836,16 @@ Status HookRuntime::StatusNow(int64_t now) noexcept
     status.inputArmed = status.actualMode && r.armed ? 1u : 0u;
     status.effectiveNativeActions = status.inputArmed ? r.actions : 0u;
     status.reserved0 =
-        (poseReady_.load(std::memory_order_acquire) ? 1u | BodySpinCapability : 0u) |
+        (poseReady_.load(std::memory_order_acquire)
+            ? 1u | BodySpinCapability | GenericTrackerSuspensionCapability : 0u) |
         ((enabledMask_ & 0x1FEu) ? 2 : 0) |
         (left ? 4 : 0) | (right ? 8 : 0) | (menu ? 16 : 0) | (proximity ? 32 : 0);
     if (!CheckIntegrity())
     {
         status.actualMode = 0;
         status.error = uint32_t(Error::HookConflict);
-        status.reserved0 &= ~(1u | BodySpinCapability);
+        status.reserved0 &= ~(1u | BodySpinCapability | GenericTrackerSuspensionCapability);
+        status.genericTrackerSuspended = 0;
         status.bodySpinActive = 0;
         status.proximityKnown = status.proximityActive = 0;
         status.proximityAgeMilliseconds = -1;

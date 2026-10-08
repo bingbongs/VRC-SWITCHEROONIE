@@ -17,6 +17,7 @@ public sealed class HarnessEngine : IDisposable
     readonly string routingConfigPath;
     readonly string spinConfigPath;
     bool spinEnabled;
+    uint stoppedSpinReason;
     readonly AutomaticRouting automaticRouting = new();
     bool automaticEnabled = true, automaticPending, disposed, routeAdopted;
     string? manualMode;
@@ -25,6 +26,7 @@ public sealed class HarnessEngine : IDisposable
     bool gameEnabled = true, gameActive;
     double gameSensitivity = 1;
     string inputOwner = "Released", gameDetail = "Choose Desktop controls, then click into VRChat.";
+    string spinDetail = "Off";
     long publishedWindow, menuPulseUntil, nextMenuPulseAt;
     readonly Queue<bool> pendingMenuPulses = new();
     bool menuPulseRequiresGame;
@@ -61,6 +63,7 @@ public sealed class HarnessEngine : IDisposable
             if (File.Exists(spinConfigPath)) spinEnabled = JsonSerializer.Deserialize<SpinPreferences>(File.ReadAllText(spinConfigPath))?.Enabled == true;
         }
         catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { spinEnabled = false; }
+        spinDetail = spinEnabled ? "Checking spin readiness" : "Off";
         this.gamePlatform.SetSpinEnabled(spinEnabled);
         try
         {
@@ -112,11 +115,13 @@ public sealed class HarnessEngine : IDisposable
     void ReleaseLocked()
     {
         spin.Reset();
+        stoppedSpinReason = 0;
         ReleasePadLocked(); gameInput.Release(); gameActive = publishedArmed = false;
         pendingMenuPulses.Clear(); menuPulseUntil = nextMenuPulseAt = 0;
         inputOwner = "Released"; publishedWindow = 0;
-        gamePlatform.SetActive(false); gamePlatform.SetTyping(gameInput.Typing || spin.Typing); gamePlatform.SetCapture(false);
-        channel.Publish(epoch, desktop, false, height, yaw, pitch, handYaw, handPitch, preset, 0, 0, 0, oscEnabled, oscPort);
+        gamePlatform.SetActive(false); gamePlatform.SetTyping(gameInput.Typing); gamePlatform.SetCapture(false);
+        spinDetail = spinEnabled ? "Checking spin readiness" : "Off";
+        channel.Publish(epoch, desktop, false, height, yaw, pitch, handYaw, handPitch, preset, 0, 0, 0, oscEnabled, oscPort, spin: spin);
     }
     void SaveGameSettings() => File.WriteAllText(gameConfigPath,
         JsonSerializer.Serialize(new GameInputSettings(gameEnabled, gameSensitivity, height), new JsonSerializerOptions { WriteIndented = true }));
@@ -201,7 +206,7 @@ public sealed class HarnessEngine : IDisposable
             double forward = 0, strafe = 0;
             uint owned = focused ? actions : 0;
             GameInputFrame game = new();
-            bool spinEligible = spinEnabled && Fresh(source) && (source.CapabilityFlags & 64) != 0 &&
+            bool spinEligible = spinEnabled && Fresh(source) && source.Error is 0 or 9 && (source.CapabilityFlags & 64) != 0 && source.SpinBlockReason != 3 &&
                 source.Epoch == epoch && !preparing && !focused;
             try
             {
@@ -209,18 +214,46 @@ public sealed class HarnessEngine : IDisposable
                     throw new InvalidOperationException(failure);
                 var sample = gamePlatform.Read((gameEnabled && routeReady || spinEligible) && !focused);
                 if (sample.Emergency) { ReleaseLocked(); detail = "Emergency release; click VRChat again to resume."; }
-                game = gameInput.Step(sample, gameEnabled && routeReady && !focused, gameSensitivity);
-                spin.Step(sample, spinEligible, desktop, gameInput.Typing, source, Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency);
+                game = gameInput.Step(sample, gameEnabled && routeReady && !focused, gameSensitivity, observeChat: spinEligible);
+                // Native refusal ends this motion attempt. Never accumulate a
+                // hidden quaternion which could jump when tracker data returns.
+                bool spinRefused = spin.Active && source.SpinBlockReason != 0 && source.SpinAttemptGeneration == spin.Generation;
+                if (spinRefused) { stoppedSpinReason = source.SpinBlockReason; spin.Reset(); }
+                else if (sample.SpinToggle) stoppedSpinReason = 0;
+                // Both routes share one game-window chat state, including when
+                // Desktop movement is disabled or the driver falls back to VR.
+                spin.Step(sample, spinEligible && !spinRefused, sharedChatState: true, observedTyping: gameInput.Typing,
+                    head: source, seconds: Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency);
                 gamePlatform.SetActive(game.Active);
-                gamePlatform.SetTyping(gameInput.Typing || spin.Typing);
+                gamePlatform.SetTyping(gameInput.Typing);
                 gamePlatform.SetCapture(game.Capture, game.Pointer);
+                bool nativeSpinCurrent = source.SpinActive && source.SpinGeneration == spin.Generation &&
+                    ((source.CapabilityFlags & 128) == 0 || source.SpinAttemptGeneration == spin.Generation);
+                spinDetail = !spinEnabled ? "Off" : !Fresh(source) ? "Waiting for tracking" :
+                    source.Error is not 0 and not 9 ? "Spin unavailable · check diagnostics" :
+                    (source.CapabilityFlags & 64) == 0 ? "Spin unavailable · driver update needed" :
+                    source.SpinBlockReason == 3 ? "Spin blocked · restart SteamVR" :
+                    preparing || source.Epoch != epoch ? "Waiting for mode switch" :
+                    focused ? "Release panel controls to spin" :
+                    !sample.Focused || sample.Window == 0 ? "Click VRChat to spin" :
+                    gameInput.Typing ? "Close chat to spin" :
+                    !source.PhysicalPoseValid ? "Waiting for headset pose" :
+                    stoppedSpinReason != 0 ? stoppedSpinReason switch
+                    {
+                        1 => desktop ? "When tracking is ready: VR → Desktop, then Numpad 5" : "Tracking stopped spin · Numpad 5 to retry",
+                        2 => "Rig changed · VR → Desktop, then Numpad 5",
+                        3 => "Spin blocked · restart SteamVR",
+                        _ => "Spin blocked · check diagnostics"
+                    } :
+                    spin.Active ? nativeSpinCurrent ? "Spinning · Numpad 5 stops" : "Starting · Numpad 5 stops" :
+                    "Ready · Numpad 5 starts";
                 gameDetail = !gameEnabled ? "Game-window controls are disabled." : !routeReady ? "Choose Desktop controls with fresh headset tracking." :
                     gameInput.Typing ? "Chat entry: desktop input released. Enter sends; Esc cancels." :
                     game.Active ? gameInput.MenuNavigation ? "VRChat active · mouse aims the menu pointer." : "VRChat active · mouse look and keyboard movement." :
                     sample.Focused ? "Click once inside VRChat to resume controls." : "Controls released · click into the VRChat window.";
             }
             catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or ObjectDisposedException)
-            { ReleaseLocked(); gameEnabled = false; gameDetail = "Game input unavailable: " + e.Message; }
+            { ReleaseLocked(); gameEnabled = false; gameDetail = "Game input unavailable: " + e.Message; spinDetail = "Spin input unavailable · check diagnostics"; }
             gameActive = game.Active;
             if (game.Active)
             {
@@ -293,7 +326,11 @@ public sealed class HarnessEngine : IDisposable
                 GameCursorWatchdogAlive = gamePlatform is WindowsGameInput watchdog && watchdog.CursorWatchdogAlive,
                 MenuNavigation = gameInput.MenuNavigation, GameInputDetail = gameDetail,
                 SpinEnabled = spinEnabled, SpinActive = spin.Active,
+                SpinDetail = spinDetail,
                 SpinRollSpeed = spin.RollSpeed, SpinPitchSpeed = spin.PitchSpeed, NativeSpinActive = source.SpinActive,
+                NativeGenericTrackerAvailable = source.GenericTrackerAvailable, NativeGenericTrackerSuspended = source.GenericTrackerSuspended,
+                NativeSpinBlockReason = source.SpinBlockReason,
+                NativeSpinAttemptGeneration = source.SpinAttemptGeneration,
                 OscEnabled = oscEnabled, OscWatchdogAlive = channel.OscWatchdogAlive, Height = height,
                 HeadAgeMilliseconds = double.IsFinite(source.HeadAge) ? source.HeadAge : -1,
                 PhysicalSamples = source.PhysicalSamples, RoutedSamples = source.RoutedSamples,
@@ -342,7 +379,9 @@ public sealed class HarnessEngine : IDisposable
                     case "ReleaseInputs": ReleaseLocked(); break;
                     case "ConfigureSpin":
                         SaveSpinSettings(command.Enabled); spinEnabled = command.Enabled;
-                        spin.Reset(); gamePlatform.SetSpinEnabled(spinEnabled); break;
+                        spin.Reset(); gamePlatform.SetSpinEnabled(spinEnabled);
+                        stoppedSpinReason = 0;
+                        spinDetail = spinEnabled ? "Checking spin readiness" : "Off"; break;
                     case "DisarmViewer":
                         if (armed && command.Window == ownerWindow) ReleasePadLocked();
                         break;
@@ -492,7 +531,7 @@ public sealed class HarnessEngine : IDisposable
         finally { transition.Release(); }
     }
     Reply Remember(string id, Reply reply) { if (requests.Count >= 128) requests.Remove(requests.Keys.First()); requests[id] = reply; return reply; }
-    public void Dispose() { lock (sync) { if (disposed) return; disposed = true; ++routingGeneration; ReleaseLocked(); desktop = false; ++epoch; channel.Publish(epoch, false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0); emergencyOsc.Dispose(); gamePlatform.Dispose(); } }
+    public void Dispose() { lock (sync) { if (disposed) return; disposed = true; ++routingGeneration; ReleaseLocked(); desktop = false; ++epoch; channel.Publish(epoch, false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, spin: spin); emergencyOsc.Dispose(); gamePlatform.Dispose(); } }
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int virtualKey);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);

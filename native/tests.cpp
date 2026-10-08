@@ -386,12 +386,15 @@ void PointerModelChecks()
     }
 }
 #include "body_controls_test_cases.hpp"
+#include "tracker_suspension_test_cases.hpp"
 } // namespace
 int main()
 {
     HandAndPostureChecks();
     PointerModelChecks();
     BodyControlsChecks();
+    TrackerSuspensionChecks();
+    CompleteRigSpinAdmissionChecks();
     ConfigurationLoaderChecks();
     IdentityPropertyChecks();
     Check(sw::EligiblePhysicalRoleIdentity(true, "oculus", "vendor-hmd-a", "Oculus Quest2"),

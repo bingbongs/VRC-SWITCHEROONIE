@@ -241,9 +241,11 @@ struct Input final : vr::IVRDriverInput
 void ExternalPose(void *, uint32_t, const vr::DriverPose_t &, uint32_t)
 {
 }
+#include "tracker_hook_test_cases.hpp"
 } // namespace
 int main()
 {
+    TrackerSuspensionHookChecks();
     alignas(8) std::byte memory[512]{};
     sw::Request request{};
     request.timestamp = sw::QpcNow();
@@ -619,9 +621,11 @@ int main()
     Check(sourceStatus.proximityKnown && !sourceStatus.proximityActive &&
               sourceStatus.proximityAgeMilliseconds >= sw::WatchdogMilliseconds,
           "change-only proximity retains observed state and exposes old event age honestly");
-    Check(sourceStatus.leftPhysicalAgeMilliseconds >= sw::WatchdogMilliseconds &&
-              sourceStatus.rightPhysicalAgeMilliseconds >= sw::WatchdogMilliseconds,
-          "stale controller captures do not falsely report a fresh controller age");
+    Check((sourceStatus.leftPhysicalAgeMilliseconds < 0 ||
+           sourceStatus.leftPhysicalAgeMilliseconds >= sw::WatchdogMilliseconds) &&
+          (sourceStatus.rightPhysicalAgeMilliseconds < 0 ||
+           sourceStatus.rightPhysicalAgeMilliseconds >= sw::WatchdogMilliseconds),
+          "stale or identity-invalidated controller captures never falsely report a fresh controller age");
     router.SetRole(0, sw::DeviceRole::Other, 100);
     router.SetRole(1, sw::DeviceRole::Other, 101);
     router.SetRole(2, sw::DeviceRole::Other, 102);

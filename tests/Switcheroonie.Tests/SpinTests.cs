@@ -8,6 +8,8 @@ internal static class SpinTests
         var sample = new GameInputSample(Window: 73, Focused: true);
         var head = new DriverSnapshot(Alive: true, HasHead: true, HeadAge: 1, HeadX: 2, HeadY: 1.7, HeadZ: -3, HeadW: 1);
         var spin = new SpinController(); double seconds = 1;
+        ulong initialGeneration = spin.Generation;
+        Verify(initialGeneration > 0 && !spin.Active, "new controller has a positive inactive cancellation token");
         static double RotatedYToZ(SpinQuaternion q) => (q * new SpinQuaternion(0, 0, 1, 0) * q.Conjugate).Z;
         var forwardOnly = new SpinController();
         forwardOnly.Step(sample with { SpinToggle = true }, true, false, false, head, 1);
@@ -22,7 +24,7 @@ internal static class SpinTests
         Step(sample with { SpinToggle = true }, false);
         Verify(!spin.Active, "disabled option rejects explicit toggle");
         Step(sample with { SpinToggle = true });
-        Verify(spin.Active && spin.Generation == 1 && spin.PivotX == 2 && Math.Abs(spin.PivotY - .95) < 1e-12 && spin.PivotZ == -3,
+        Verify(spin.Active && spin.Generation > initialGeneration && spin.PivotX == 2 && Math.Abs(spin.PivotY - .95) < 1e-12 && spin.PivotZ == -3,
             "explicit Numpad5 captures a fixed body pivot from physical pose");
         for (int i = 0; i < 50; ++i) Step(sample with { SpinLeft = true });
         Verify(spin.RollSpeed is > .85 and < .95 && spin.PitchSpeed == 0 && spin.Rotation.Valid,
@@ -39,9 +41,12 @@ internal static class SpinTests
         Verify(spin.RollSpeed == 0 && spin.PitchSpeed == 0 && spin.Active && spin.Rotation.Valid,
             "maximum speed coasts down in about a second while retaining final orientation");
         Step(sample); Verify(spin.Rotation.Valid && spin.PivotX == 2, "stationary state retains pivot and unit orientation");
+        ulong stoppedGeneration = spin.Generation;
         Step(sample with { SpinToggle = true });
-        Verify(!spin.Active && spin.Rotation == SpinQuaternion.Identity, "Numpad5 exits to natural tracking");
+        Verify(!spin.Active && spin.Rotation == SpinQuaternion.Identity && spin.Generation == stoppedGeneration,
+            "Numpad5 exits to natural tracking while retaining its exact cancellation token");
         Step(sample with { SpinToggle = true }, desktop: true);
+        Verify(spin.Generation > stoppedGeneration, "each new activation advances the positive token");
         Step(sample with { SpinBack = true }, desktop: true);
         Verify(spin.Active && spin.PitchSpeed < 0, "desktop and VR share the same whole body controller");
         Step(sample with { Focused = false }); Verify(!spin.Active, "focus loss removes spin authority");
@@ -58,6 +63,17 @@ internal static class SpinTests
         Step(sample); Verify(!spin.Active, "window identity changes release motion");
         spin.Step(sample with { SpinToggle = true }, true, false, false, head with { HeadW = 0 }, seconds + .1);
         Verify(!spin.Active, "missing or invalid source quaternion cannot activate motion");
+        var retainedEpochHead = head with { Epoch = 41 };
+        var firstProcess = new SpinController();
+        firstProcess.Step(sample with { SpinToggle = true }, true, false, false, retainedEpochHead, 1);
+        ulong beforeRestart = firstProcess.Generation;
+        firstProcess.Reset();
+        var restartedProcess = new SpinController();
+        ulong restartCancellation = restartedProcess.Generation;
+        restartedProcess.Step(sample with { SpinToggle = true }, true, false, false, retainedEpochHead, 2);
+        Verify(beforeRestart > 0 && restartCancellation > beforeRestart && restartedProcess.Generation > restartCancellation &&
+            restartedProcess.Active && restartedProcess.Rotation == SpinQuaternion.Identity,
+            "separate controllers on the same retained native epoch cannot reuse an attempt token");
         foreach (var pair in new[] { (0x50u, 2), (0x4Bu, 4), (0x4Cu, 5), (0x4Du, 6), (0x48u, 8) })
         {
             Verify(WindowsGameInput.NumpadKey(pair.Item1, 0) == pair.Item2, "physical numpad scans work with Num Lock on or off");

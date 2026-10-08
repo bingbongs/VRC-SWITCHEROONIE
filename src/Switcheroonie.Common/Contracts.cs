@@ -64,9 +64,14 @@ public sealed record HarnessStatus
     public bool MenuNavigation { get; init; }
     public bool SpinEnabled { get; init; }
     public bool SpinActive { get; init; }
+    public string SpinDetail { get; init; } = "";
     public double SpinRollSpeed { get; init; }
     public double SpinPitchSpeed { get; init; }
     public bool NativeSpinActive { get; init; }
+    public uint NativeGenericTrackerAvailable { get; init; }
+    public uint NativeGenericTrackerSuspended { get; init; }
+    public uint NativeSpinBlockReason { get; init; }
+    public ulong NativeSpinAttemptGeneration { get; init; }
     public double GameSensitivity { get; init; } = 1;
     public string GameInputDetail { get; init; } = "Click into VRChat to use desktop controls.";
     public string InputOwner { get; init; } = "Released";

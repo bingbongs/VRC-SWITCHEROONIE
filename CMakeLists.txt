@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(VRC_SWITCHEROONIE VERSION 0.2.0 LANGUAGES C CXX)
+project(VRC_SWITCHEROONIE VERSION 0.2.2 LANGUAGES C CXX)
 if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "The native runtime backend requires Windows x64.")
 endif()

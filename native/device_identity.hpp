@@ -10,6 +10,10 @@ inline bool EligibleBodyTrackedClass(vr::ETrackedDeviceClass deviceClass) noexce
            deviceClass == vr::TrackedDeviceClass_Controller ||
            deviceClass == vr::TrackedDeviceClass_GenericTracker;
 }
+inline bool EligibleGenericTrackerClass(vr::ETrackedDeviceClass deviceClass) noexcept
+{
+    return deviceClass == vr::TrackedDeviceClass_GenericTracker;
+}
 inline bool IdentityPrefix(std::string_view value, std::string_view prefix) noexcept
 {
     if (value.size() < prefix.size()) return false;

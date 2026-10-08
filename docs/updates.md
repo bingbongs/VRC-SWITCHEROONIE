@@ -6,7 +6,7 @@ Downloads do not stop VRChat, SteamVR, or the running harness. Releases stage un
 
 The registered companion driver must already have its canonical ownership journal and unchanged opt-in configuration. Updating replaces only signed companion files after stopped-runtime checks, with exact-file recovery backups. It does not register a missing driver, alter settings or other drivers, or install the research HMD.
 
-A persistent transition is written before driver replacement. The updater commits current.json only after the signed driver and portable version are matched. Interrupted transitions remain visible and prevent mismatched UI/broker launches. If a runtime appears, recovery writes also wait for shutdown. Rollback selects the previous signed version and driver, retaining the highest observed release sequence. The first update saves an independently signed v0.2.0 baseline for the same behavior.
+A persistent transition is written before driver replacement. The updater commits current.json only after the signed driver and portable version are matched. Interrupted transitions remain visible and prevent mismatched UI/broker launches. If a runtime appears, recovery writes also wait for shutdown. Rollback selects the previous signed version and driver, retaining the highest observed release sequence. The first update independently retains both the original installed release and the signed v0.2.0 delivery floor. Starting from a later first-install package therefore rolls back to that original release. Legacy unversioned bootstrap records identify v0.2.0; unknown or changed origins fail closed.
 
 ## Verification
 
@@ -32,7 +32,7 @@ The updater's --status, --check, --activate, and --rollback commands return stat
 
 The compact UI owns one UpdateService. CheckAndStageAsync runs outside rendering, its status is cached, and resident exit cancels/disposes it. ResolveStableLauncher returns the original launcher only after the selected payload and original bootstrap package match signed inventories. Uncertain managed startup is disabled; no registry value is silently replaced.
 
-Tests use in-memory signing keys, fake HTTP, temporary stores, and private driver/config/registration fixtures. They also test real DPAPI and a captured owned helper for lock exclusion. They do not run VRChat, load VR runtimes, modify live drivers or capture the cursor. After publication, the exact final updater downloaded signed release 0.2.0 from the real GitHub feed and verified all 456 files in a private store with a simulated older selection. Activation remained deferred. Windows sign-in and actual subsequent-version activation/rollback remain separate acceptance tests.
+Tests use in-memory signing keys, fake HTTP, temporary stores, and private driver/config/registration fixtures. They also test real DPAPI and a captured owned helper for lock exclusion. They do not run VRChat, load VR runtimes, modify live drivers or capture the cursor. After publication, the exact final updater downloaded signed release 0.2.0 from the real GitHub feed and verified all 456 files in a private store with a simulated older selection. The exact 0.2.1 updater also verified/staged the real signed 0.2.1 production update, retained signed 0.2.0 and the stable launcher, and deferred activation while the runtime and harness were active. Windows sign-in and actual subsequent-version activation/rollback remain separate acceptance tests.
 
 ## Primary references
 

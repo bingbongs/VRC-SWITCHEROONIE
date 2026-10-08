@@ -55,7 +55,7 @@ class HookRuntime
     bool InstallPose(bool enforceOwner, const PoseChainApproval *isolatedFixture);
     void TryDeferredPose(int64_t now) noexcept;
     void TickInternal(int64_t now) noexcept;
-    void SubmitInternal(uint32_t, const vr::DriverPose_t &, uint64_t epoch) noexcept;
+    bool SubmitInternal(uint32_t, const vr::DriverPose_t &, uint64_t epoch) noexcept;
     bool RetainForShutdown(const char *) noexcept;
     using PoseFn = void (*)(void *, uint32_t, const vr::DriverPose_t &, uint32_t);
     using CreateBoolFn = vr::EVRInputError (*)(void *, uint64_t, const char *, uint64_t *);
@@ -95,6 +95,7 @@ class HookRuntime
     std::array<Component, 2048> components_{};
     std::array<std::atomic<void *>, vr::k_unMaxTrackedDeviceCount> poseHosts_{};
     std::atomic<uint64_t> spunDevices_{};
+    std::atomic<uint64_t> suspendedDevices_{};
     std::atomic<bool> running_{}, wasDesktop_{};
     mutable std::atomic<uint32_t> activeCalls_{};
     std::atomic<uint64_t> menuHandle_{};

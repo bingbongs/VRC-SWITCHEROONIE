@@ -433,9 +433,9 @@ public partial class SettingsWindow : Window
             _updatingSpin = true; SpinCheck.IsChecked = status.SpinEnabled; _updatingSpin = false;
         }
         SpinCheck.IsEnabled = !_spinCommandPending;
-        SpinStatusText.Text = !status.SpinEnabled ? "Off" : status.SpinActive
+        SpinStatusText.Text = !string.IsNullOrWhiteSpace(status.SpinDetail) ? status.SpinDetail : !status.SpinEnabled ? "Off" : status.SpinActive
             ? status.NativeSpinActive ? "Spinning · Numpad 5 stops" : "Starting · Numpad 5 stops"
-            : "Enabled · Numpad 5 starts / stops";
+            : "Click VRChat · Numpad 5 starts / stops";
         _spinIcon.SetPlaying(status.SpinEnabled); UpdateSpinVisibility();
         if (!_heightTimer.IsEnabled && !HeightSlider.IsMouseCaptureWithin)
         {
@@ -872,7 +872,7 @@ public partial class SettingsWindow : Window
                 timestampUtc = DateTime.UtcNow,
                 brokerResponding = _connected,
                 status = _connected ? _status : null,
-                uiVersion = "0.2.1",
+            uiVersion = "0.2.2",
                 hardwareTests = "Not performed by this panel; consult the evidence reports.",
                 shortcuts = new { toggleRegistered = _toggleHotkey, releaseRegistered = _releaseHotkey }
             };

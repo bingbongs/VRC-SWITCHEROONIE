@@ -50,11 +50,11 @@ public sealed class GameInputController
         (s.LeftDown ? 64u : 0) | (s.RightDown ? 128u : 0) | (s.MiddleDown ? 256u : 0) |
         (s.Crouch ? 512u : 0) | (s.Prone ? 1024u : 0);
 
-    public GameInputFrame Step(GameInputSample s, bool eligible, double sensitivity)
+    public GameInputFrame Step(GameInputSample s, bool eligible, double sensitivity, bool observeChat = false)
     {
         lastLeft = s.LeftDown;
         if (s.Emergency) { Release(); return new(); }
-        if (!eligible || !s.Focused || s.Window == 0)
+        if ((!eligible && !observeChat) || !s.Focused || s.Window == 0)
         {
             Release();
             // No stale event/delta or button survives a focus or source boundary.
@@ -65,6 +65,12 @@ public sealed class GameInputController
             if (window != 0) Reset(); else Release(false);
             waitForRelease = false; window = s.Window;
         }
+        // Independent VR spin still needs authenticated chat edges. Observing
+        // those edges never acquires Desktop movement, buttons or cursor input.
+        if (!eligible)
+        {
+            Release(); lastLeft = false; waitForRelease = false;
+        }
         if (waitForRelease)
         {
             if (!s.LeftDown) waitForRelease = false;
@@ -74,6 +80,7 @@ public sealed class GameInputController
         if (s.ChatCancel && typing) { typing = false; heldGate = held; return new(); }
         if (s.ChatToggle) { typing = !typing; heldGate = held; return new(); }
         if (typing) return new();
+        if (!eligible) return new();
         if (!active)
         {
             if (!s.ActivateClick) return new();

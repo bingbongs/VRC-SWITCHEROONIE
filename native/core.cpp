@@ -79,7 +79,7 @@ struct Unlock
     }
 };
 } // namespace
-bool PoseStore::Write(const PoseSnapshot &pose) noexcept
+bool PoseStore::Write(const PoseSnapshot &pose, void (*publish)(void *) noexcept, void *context) noexcept
 {
     if (writer_.test_and_set(std::memory_order_acquire))
         return false;
@@ -90,6 +90,7 @@ bool PoseStore::Write(const PoseSnapshot &pose) noexcept
     std::memcpy(words, &pose, sizeof(pose));
     for (size_t i = 0; i < payload_.size(); ++i)
         payload_[i].store(words[i], std::memory_order_relaxed);
+    if (publish) publish(context);
     sequence_.store(n + 2, std::memory_order_release);
     return true;
 }
@@ -116,22 +117,77 @@ void Router::SetRole(uint32_t index, DeviceRole role, uint64_t container) noexce
 {
     if (index >= roles_.size())
         return;
-    if (Role(index) != role || containers_[index].load(std::memory_order_acquire) != container)
+    const auto previousRole = Role(index);
+    const bool changedContainer = containers_[index].load(std::memory_order_acquire) != container;
+    if ((previousRole != role || changedContainer) && BodySpinEligible(index))
+        RetireCurrentSpin(GenericTracker(index) &&
+                         spinDesktopGeneration_.load(std::memory_order_acquire) ==
+                             spinAdmittedGeneration_.load(std::memory_order_acquire)
+                             ? BodySpinBlockReason::DesktopRigIdentityChanged
+                             : BodySpinBlockReason::StalePhysicalRig);
+    if (changedContainer)
+    {
+        poseValid_[index].store(false, std::memory_order_release);
+        capturedContainers_[index].store(0, std::memory_order_release);
+        captureTimestamps_[index].store(0, std::memory_order_release);
+    }
+    if (changedContainer && (previousRole == DeviceRole::Head || role == DeviceRole::Head))
+    {
+        headValid_.store(false, std::memory_order_release);
+        headContainer_.store(0, std::memory_order_release);
+        headTimestamp_.store(0, std::memory_order_release);
+    }
+    if (previousRole != role || changedContainer)
+    {
+        captureInvalidVersions_[index].fetch_add(1, std::memory_order_acq_rel);
         bodySpinContainers_[index].store(0, std::memory_order_release);
+        genericTrackerContainers_[index].store(0, std::memory_order_release);
+    }
     containers_[index].store(container, std::memory_order_release);
     roles_[index].store(role, std::memory_order_release);
 }
 void Router::SetBodySpinEligible(uint32_t index, bool eligible) noexcept
 {
     if (index < bodySpinContainers_.size())
+    {
+        if (eligible != BodySpinEligible(index))
+            RetireCurrentSpin(BodySpinBlockReason::StalePhysicalRig);
         bodySpinContainers_[index].store(eligible ? containers_[index].load(std::memory_order_acquire) : 0,
                                         std::memory_order_release);
+    }
 }
 bool Router::BodySpinEligible(uint32_t index) const noexcept
 {
     if (index >= bodySpinContainers_.size()) return false;
     auto container = containers_[index].load(std::memory_order_acquire);
     return container && bodySpinContainers_[index].load(std::memory_order_acquire) == container;
+}
+void Router::SetGenericTracker(uint32_t index, bool eligible) noexcept
+{
+    if (index < genericTrackerContainers_.size())
+    {
+        if (eligible != GenericTracker(index))
+            RetireCurrentSpin(spinDesktopGeneration_.load(std::memory_order_acquire) ==
+                                      spinAdmittedGeneration_.load(std::memory_order_acquire)
+                                  ? BodySpinBlockReason::DesktopRigIdentityChanged
+                                  : BodySpinBlockReason::StalePhysicalRig);
+        genericTrackerContainers_[index].store(
+            eligible && Role(index) == DeviceRole::Other
+                ? containers_[index].load(std::memory_order_acquire) : 0,
+            std::memory_order_release);
+    }
+}
+bool Router::GenericTracker(uint32_t index) const noexcept
+{
+    if (index >= genericTrackerContainers_.size() || Role(index) != DeviceRole::Other)
+        return false;
+    const auto container = containers_[index].load(std::memory_order_acquire);
+    return container && genericTrackerContainers_[index].load(std::memory_order_acquire) == container;
+}
+bool Router::GenericTrackerPhysical(uint32_t index, PoseSnapshot &source) const noexcept
+{
+    return GenericTracker(index) && Physical(index, source) && source.container &&
+           source.container == containers_[index].load(std::memory_order_acquire) && GenericTracker(index);
 }
 DeviceRole Router::Role(uint32_t index) const noexcept
 {
@@ -151,19 +207,36 @@ void Router::Capture(uint32_t index, const vr::DriverPose_t &original, int64_t n
 {
     if (index >= poses_.size())
         return;
-    bool stored = poses_[index].Write({original, now});
-    bool valid = ValidPose(original);
-    if (stored)
-        poseValid_[index].store(valid, std::memory_order_release);
-    if (Role(index) == DeviceRole::Head)
+    const auto observedInvalidVersion = captureInvalidVersions_[index].load(std::memory_order_acquire);
+    const auto container = containers_[index].load(std::memory_order_acquire);
+    const bool valid = ValidPose(original);
+    const auto invalidVersion = valid ? observedInvalidVersion
+        : captureInvalidVersions_[index].fetch_add(1, std::memory_order_acq_rel) + 1;
+    if (!valid && BodySpinEligible(index) &&
+        container == containers_[index].load(std::memory_order_acquire))
+        RetireCurrentSpin(BodySpinBlockReason::StalePhysicalRig);
+    struct Publication
     {
-        physical_.fetch_add(1, std::memory_order_relaxed);
-        if (stored)
+        Router *router; uint32_t index; uint64_t container, invalidVersion; int64_t now; bool valid;
+    } publication{this, index, container, invalidVersion, now, valid};
+    // The pose and its metadata share one writer ownership. A second callback
+    // cannot publish an invalid pose and then have an earlier writer's cache
+    // overwrite it. Invalid events also invalidate admission on a writer miss.
+    poses_[index].Write({original, now, 0, container}, [](void *context) noexcept {
+        auto &p = *static_cast<Publication *>(context);
+        auto &router = *p.router;
+        router.capturedContainers_[p.index].store(p.container, std::memory_order_release);
+        router.captureTimestamps_[p.index].store(p.now, std::memory_order_release);
+        router.poseValid_[p.index].store(p.valid, std::memory_order_release);
+        if (router.Role(p.index) == DeviceRole::Head)
         {
-            headValid_.store(valid, std::memory_order_release);
-            headTimestamp_.store(now, std::memory_order_release);
+            router.headContainer_.store(p.container, std::memory_order_release);
+            router.headValid_.store(p.valid, std::memory_order_release);
+            router.headTimestamp_.store(p.now, std::memory_order_release);
         }
-    }
+        router.capturedInvalidVersions_[p.index].store(p.invalidVersion, std::memory_order_release);
+    }, &publication);
+    if (Role(index) == DeviceRole::Head) physical_.fetch_add(1, std::memory_order_relaxed);
 }
 bool Router::Physical(uint32_t index, PoseSnapshot &out) const noexcept
 {
@@ -227,23 +300,170 @@ bool Router::BodySpinActive(const Request &r, bool read, int64_t now, int64_t fr
 }
 bool Router::BodySpinPermitted(const Request &r, bool read, int64_t now, int64_t frequency) const noexcept
 {
-    if (!BodySpinActive(r, read, now, frequency) ||
-        epoch_.load(std::memory_order_acquire) != r.epoch ||
-        Role(0) != DeviceRole::Head || !BodySpinEligible(0) ||
-        !headValid_.load(std::memory_order_acquire))
+    if (read && epoch_.load(std::memory_order_acquire) != r.epoch) return false;
+    if (read && !r.bodySpinActive && epoch_.load(std::memory_order_acquire) == r.epoch)
+    {
+        Error error{};
+        if (ValidRequest(r, now, frequency, error))
+            RetireSpinGeneration(r.bodySpinGeneration, BodySpinBlockReason::StalePhysicalRig);
+    }
+    if (!BodySpinActive(r, read, now, frequency))
+    {
+        // A refreshed lease cannot revive rotation after observed source loss.
+        if (!read) RetireCurrentSpin(BodySpinBlockReason::StalePhysicalRig);
+        else if (r.bodySpinActive && r.bodySpinGeneration &&
+                 r.bodySpinGeneration <= spinAdmittedGeneration_.load(std::memory_order_acquire))
+            RetireSpinGeneration(r.bodySpinGeneration, BodySpinBlockReason::StalePhysicalRig);
         return false;
+    }
+    if (epoch_.load(std::memory_order_acquire) != r.epoch)
+        return false;
+    if (!RaiseSpinFloor(spinAdmittedGeneration_, r.bodySpinGeneration) ||
+        LatchedSpinBlock(r) != BodySpinBlockReason::None) return false;
+    if (r.requestedMode && !RaiseSpinFloor(spinDesktopGeneration_, r.bodySpinGeneration)) return false;
+    auto refuse = [&](BodySpinBlockReason reason) {
+        LatchSpinBlock(r, reason); return false;
+    };
+    if (
+        Role(0) != DeviceRole::Head || !BodySpinEligible(0) ||
+        !headContainer_.load(std::memory_order_acquire) ||
+        headContainer_.load(std::memory_order_acquire) != containers_[0].load(std::memory_order_acquire) ||
+        !headValid_.load(std::memory_order_acquire))
+        return refuse(BodySpinBlockReason::StalePhysicalRig);
     const auto stamp = headTimestamp_.load(std::memory_order_acquire);
     const auto age = (static_cast<double>(now) - stamp) * 1000 / frequency;
-    return stamp > 0 && age >= -25 && age <= WatchdogMilliseconds;
+    if (stamp <= 0 || age < -25 || age > WatchdogMilliseconds)
+        return refuse(BodySpinBlockReason::StalePhysicalRig);
+    // Both modes require coherent current poses for the complete observed rig.
+    // A bounded read miss cannot prove fresh whole-rig tracking and refuses the
+    // activation, rather than mixing independently published cache fields.
+    for (uint32_t index = 0; index < poses_.size(); ++index)
+    {
+        if (!BodySpinEligible(index)) continue;
+        const auto container = containers_[index].load(std::memory_order_acquire);
+        PoseSnapshot source{};
+        if (capturedInvalidVersions_[index].load(std::memory_order_acquire) !=
+                captureInvalidVersions_[index].load(std::memory_order_acquire) ||
+            !Physical(index, source) || !ValidPose(source.pose) || source.container != container)
+            return refuse(BodySpinBlockReason::StalePhysicalRig);
+        const auto memberAge = (static_cast<double>(now) - source.timestamp) * 1000 / frequency;
+        if (
+            memberAge < -25 || memberAge > WatchdogMilliseconds)
+            return refuse(BodySpinBlockReason::StalePhysicalRig);
+    }
+    if (r.requestedMode)
+    {
+        if (!desktop_.load(std::memory_order_acquire) ||
+            anchorEpoch_.load(std::memory_order_acquire) != r.epoch)
+            return refuse(BodySpinBlockReason::StalePhysicalRig);
+        if (!TrackerAnchorsReady(r.epoch))
+        {
+            auto reason = BodySpinBlockReason::StalePhysicalRig;
+            if (trackerAnchorEpoch_.load(std::memory_order_acquire) == r.epoch)
+                for (uint32_t index = 0; index < poses_.size(); ++index)
+                {
+                    const auto expected = trackerAnchorContainers_[index].load(std::memory_order_acquire);
+                    const auto current = GenericTracker(index) ? containers_[index].load(std::memory_order_acquire) : 0;
+                    if (expected != current) { reason = BodySpinBlockReason::DesktopRigIdentityChanged; break; }
+                }
+            return refuse(reason);
+        }
+    }
+    return LatchedSpinBlock(r) == BodySpinBlockReason::None;
+}
+BodySpinBlockReason Router::LatchedSpinBlock(const Request &r) const noexcept
+{
+    if (spinAdmissionFault_.load(std::memory_order_acquire))
+        return BodySpinBlockReason::NativeAdmissionFault;
+    if (r.bodySpinGeneration < spinAdmittedGeneration_.load(std::memory_order_acquire) ||
+        r.bodySpinGeneration <= spinRetiredGeneration_.load(std::memory_order_acquire))
+        return spinIdentityRefusalGeneration_.load(std::memory_order_acquire) >= r.bodySpinGeneration
+                   ? BodySpinBlockReason::DesktopRigIdentityChanged : BodySpinBlockReason::StalePhysicalRig;
+    return BodySpinBlockReason::None;
+}
+void Router::LatchSpinBlock(const Request &r, BodySpinBlockReason reason) const noexcept
+{
+    if (epoch_.load(std::memory_order_acquire) != r.epoch) return;
+    RetireSpinGeneration(r.bodySpinGeneration, reason);
+}
+bool Router::RaiseSpinFloor(std::atomic<uint64_t> &floor, uint64_t generation) const noexcept
+{
+    auto current = floor.load(std::memory_order_acquire);
+    for (int attempt = 0; attempt < 32; ++attempt)
+    {
+        if (current >= generation) return true;
+        if (floor.compare_exchange_strong(current, generation, std::memory_order_acq_rel,
+                                          std::memory_order_acquire)) return true;
+    }
+    // A refusal must never disappear through a bounded compare-exchange miss.
+    // This exceptional contention state remains closed for the driver lifetime.
+    spinAdmissionFault_.store(true, std::memory_order_release);
+    return false;
+}
+void Router::RetireSpinGeneration(uint64_t generation, BodySpinBlockReason reason) const noexcept
+{
+    if (!generation) return;
+    if (reason == BodySpinBlockReason::DesktopRigIdentityChanged)
+        RaiseSpinFloor(spinIdentityRefusalGeneration_, generation);
+    RaiseSpinFloor(spinRetiredGeneration_, generation);
+}
+void Router::RetireCurrentSpin(BodySpinBlockReason reason) const noexcept
+{
+    RetireSpinGeneration(spinAdmittedGeneration_.load(std::memory_order_acquire), reason);
+}
+void Router::CaptureTrackerAnchors(uint64_t epoch, int64_t now, int64_t frequency) noexcept
+{
+    trackerAnchorComplete_.store(false, std::memory_order_release);
+    bool complete = true;
+    for (uint32_t index = 0; index < poses_.size(); ++index)
+    {
+        trackerAnchorContainers_[index].store(0, std::memory_order_release);
+        if (!GenericTracker(index)) continue;
+        const auto container = containers_[index].load(std::memory_order_acquire);
+        trackerAnchorContainers_[index].store(container, std::memory_order_release);
+        PoseSnapshot source{};
+        if (!Physical(index, source) || !ValidPose(source.pose) || source.container != container)
+        { complete = false; continue; }
+        const auto age = (static_cast<double>(now) - source.timestamp) * 1000 / frequency;
+        source.epoch = epoch;
+        if (age < -25 || age > WatchdogMilliseconds || !trackerAnchors_[index].Write(source) ||
+            !GenericTracker(index) || containers_[index].load(std::memory_order_acquire) != container)
+        { complete = false; continue; }
+    }
+    trackerAnchorEpoch_.store(epoch, std::memory_order_release);
+    trackerAnchorComplete_.store(complete, std::memory_order_release);
+}
+bool Router::TrackerAnchorsReady(uint64_t epoch) const noexcept
+{
+    if (!trackerAnchorComplete_.load(std::memory_order_acquire) ||
+        trackerAnchorEpoch_.load(std::memory_order_acquire) != epoch) return false;
+    for (uint32_t index = 0; index < poses_.size(); ++index)
+    {
+        const auto expected = trackerAnchorContainers_[index].load(std::memory_order_acquire);
+        const auto current = GenericTracker(index)
+            ? containers_[index].load(std::memory_order_acquire) : 0;
+        if (expected != current) return false;
+    }
+    return trackerAnchorComplete_.load(std::memory_order_acquire) &&
+           trackerAnchorEpoch_.load(std::memory_order_acquire) == epoch;
+}
+BodySpinBlockReason Router::SpinBlockReason(const Request &r, bool read,
+                                          int64_t now, int64_t frequency) const noexcept
+{
+    BodySpinPermitted(r, read, now, frequency);
+    return read && r.bodySpinActive ? LatchedSpinBlock(r) : BodySpinBlockReason::None;
 }
 bool Router::OriginalForRestore(uint32_t index, int64_t now, int64_t frequency,
                                 vr::DriverPose_t &out) const noexcept
 {
     PoseSnapshot original{};
-    if (frequency <= 0 || !Physical(index, original)) return false;
+    if (frequency <= 0 || !Physical(index, original) ||
+        original.container != containers_[index].load(std::memory_order_acquire)) return false;
     out = original.pose;
     const auto age = (static_cast<double>(now) - original.timestamp) * 1000 / frequency;
-    if (age > WatchdogMilliseconds || age < -25)
+    if (age > WatchdogMilliseconds || age < -25 ||
+        capturedInvalidVersions_[index].load(std::memory_order_acquire) !=
+            captureInvalidVersions_[index].load(std::memory_order_acquire))
     {
         out.poseIsValid = false;
         out.result = vr::TrackingResult_Uninitialized;
@@ -274,7 +494,11 @@ bool Router::Evaluate(const Request &r, bool read, int64_t now, int64_t frequenc
         return false;
     }
     const auto headTimestamp = headTimestamp_.load(std::memory_order_acquire);
-    if (!headValid_.load(std::memory_order_acquire) || !headTimestamp)
+    if (capturedInvalidVersions_[0].load(std::memory_order_acquire) !=
+            captureInvalidVersions_[0].load(std::memory_order_acquire) ||
+        !headValid_.load(std::memory_order_acquire) || !headTimestamp ||
+        Role(0) != DeviceRole::Head || !headContainer_.load(std::memory_order_acquire) ||
+        headContainer_.load(std::memory_order_acquire) != containers_[0].load(std::memory_order_acquire))
     {
         desktop_.store(false, std::memory_order_release);
         error_.store(Error::NoHead, std::memory_order_relaxed);
@@ -313,17 +537,27 @@ bool Router::Evaluate(const Request &r, bool read, int64_t now, int64_t frequenc
                     headIndex = i;
                     break;
                 }
-            if (!Physical(headIndex, head) || !ValidPose(head.pose))
+            if (!Physical(headIndex, head) || !ValidPose(head.pose) ||
+                head.container != containers_[headIndex].load(std::memory_order_acquire))
                 return false;
             head.epoch = r.epoch;
             if (epoch_.load(std::memory_order_acquire) != r.epoch || !anchor_.Write(head))
                 return false;
+            CaptureTrackerAnchors(r.epoch, now, frequency);
             anchorEpoch_.store(r.epoch, std::memory_order_release);
             anchorValid_.store(true, std::memory_order_release);
         }
     }
     if (epoch_.load(std::memory_order_acquire) != r.epoch)
         return false;
+    PoseSnapshot committedHead{};
+    if (!anchor_.Read(committedHead) || committedHead.epoch != r.epoch ||
+        committedHead.container != containers_[0].load(std::memory_order_acquire))
+    {
+        desktop_.store(false, std::memory_order_release);
+        error_.store(Error::NoHead, std::memory_order_relaxed);
+        return false;
+    }
     desktop_.store(true, std::memory_order_release);
     if (epoch_.load(std::memory_order_acquire) != r.epoch)
         return false;
@@ -418,17 +652,23 @@ bool Router::Synthetic(DeviceRole role, const PoseSnapshot &source, const PoseSn
     return true;
 }
 bool Router::RoutePose(uint32_t index, const Request &r, bool read, int64_t now, int64_t frequency,
-                       vr::DriverPose_t &out, bool *spinApplied) noexcept
+                       vr::DriverPose_t &out, bool *spinApplied, bool *trackerSuspended) noexcept
 {
     if (spinApplied) *spinApplied = false;
+    if (trackerSuspended) *trackerSuspended = false;
     const bool desktop = Evaluate(r, read, now, frequency);
     const bool spin = BodySpinPermitted(r, read, now, frequency);
-    if ((!desktop && !spin) || index >= poses_.size() ||
-        !poseValid_[index].load(std::memory_order_acquire))
+    if ((!desktop && !spin) || index >= poses_.size())
         return false;
     const auto container = containers_[index].load(std::memory_order_acquire);
     const auto role = Role(index);
+    const bool generic = GenericTracker(index);
+    const bool suspend = desktop && generic && !spin;
     const bool applySpin = spin && BodySpinEligible(index);
+    if (!suspend && (capturedInvalidVersions_[index].load(std::memory_order_acquire) !=
+                         captureInvalidVersions_[index].load(std::memory_order_acquire) ||
+                     !poseValid_[index].load(std::memory_order_acquire) ||
+                     capturedContainers_[index].load(std::memory_order_acquire) != container)) return false;
     if (desktop && role != DeviceRole::Other)
     {
         PoseSnapshot anchor{};
@@ -437,10 +677,33 @@ bool Router::RoutePose(uint32_t index, const Request &r, bool read, int64_t now,
             !Synthetic(role, anchor, anchor, r, out))
             return false;
     }
+    else if (desktop && generic)
+    {
+        PoseSnapshot source{};
+        if (suspend)
+        {
+            if (!Physical(index, source) || source.container != container) return false;
+            out = source.pose;
+            out.poseIsValid = false;
+            out.deviceIsConnected = false;
+            out.result = vr::TrackingResult_Uninitialized;
+        }
+        else
+        {
+            if (!applySpin || !TrackerAnchorsReady(r.epoch) || !trackerAnchors_[index].Read(source) ||
+                source.epoch != r.epoch || source.container != container || !ValidPose(source.pose))
+                return false;
+            out = source.pose;
+            out.poseTimeOffset = 0;
+            for (int axis = 0; axis < 3; ++axis)
+                out.vecVelocity[axis] = out.vecAcceleration[axis] =
+                    out.vecAngularVelocity[axis] = out.vecAngularAcceleration[axis] = 0;
+        }
+    }
     else
     {
         PoseSnapshot source{};
-        if (!applySpin || !Physical(index, source) || !ValidPose(source.pose)) return false;
+        if (!applySpin || !Physical(index, source) || !ValidPose(source.pose) || source.container != container) return false;
         auto age = (static_cast<double>(now) - source.timestamp) * 1000 / frequency;
         if (age < -25 || age > WatchdogMilliseconds) return false;
         out = source.pose;
@@ -461,10 +724,14 @@ bool Router::RoutePose(uint32_t index, const Request &r, bool read, int64_t now,
         out.vecWorldFromDriverTranslation[2] = r.bodySpinPivot[2] + translation.z;
     }
     if (Role(index) != role || containers_[index].load(std::memory_order_acquire) != container ||
+        (generic && !GenericTracker(index)) ||
+        (suspend && (!desktop_.load(std::memory_order_acquire) ||
+                     anchorEpoch_.load(std::memory_order_acquire) != r.epoch)) ||
         (applySpin && (!BodySpinEligible(index) || !BodySpinPermitted(r, read, now, frequency))) ||
         epoch_.load(std::memory_order_acquire) != r.epoch)
         return false;
     if (spinApplied) *spinApplied = applySpin;
+    if (trackerSuspended) *trackerSuspended = suspend;
     return true;
 }
 Status Router::GetStatus(const Request &r, bool read, int64_t now, int64_t frequency) noexcept
@@ -475,11 +742,13 @@ Status Router::GetStatus(const Request &r, bool read, int64_t now, int64_t frequ
     s.routedSamples = routed_.load(std::memory_order_relaxed);
     s.physicalSamples = physical_.load(std::memory_order_relaxed);
     s.bodySpinSamples = bodySpinSamples_.load(std::memory_order_relaxed);
+    s.bodySpinAttemptGeneration = read ? r.bodySpinGeneration : 0;
     s.bodySpinGeneration = bodySpinGeneration_.load(std::memory_order_acquire);
     s.headAgeMilliseconds = -1;
     s.actualMode = Evaluate(r, read, now, frequency) ? 1 : 0;
     s.bodySpinActive = BodySpinPermitted(r, read, now, frequency) && s.bodySpinSamples &&
                        s.bodySpinGeneration == r.bodySpinGeneration;
+    s.bodySpinBlockReason = uint32_t(SpinBlockReason(r, read, now, frequency));
     s.error = uint32_t(error_.load(std::memory_order_relaxed));
     s.anchorEpoch = anchorValid_.load(std::memory_order_acquire)
                         ? anchorEpoch_.load(std::memory_order_acquire) : 0;
@@ -506,7 +775,13 @@ Status Router::GetStatus(const Request &r, bool read, int64_t now, int64_t frequ
     {
         auto role = Role(i);
         PoseSnapshot p{};
-        if (role == DeviceRole::Other || !Physical(i, p) || !ValidPose(p.pose))
+        if (GenericTrackerPhysical(i, p))
+            ++s.genericTrackerAvailable;
+        if (role == DeviceRole::Other || !Physical(i, p) || !ValidPose(p.pose) ||
+            capturedInvalidVersions_[i].load(std::memory_order_acquire) !=
+                captureInvalidVersions_[i].load(std::memory_order_acquire) ||
+            !poseValid_[i].load(std::memory_order_acquire) ||
+            p.container != containers_[i].load(std::memory_order_acquire) || Role(i) != role)
             continue;
         auto age = (static_cast<double>(now) - p.timestamp) * 1000 / frequency;
         if (role == DeviceRole::Head)

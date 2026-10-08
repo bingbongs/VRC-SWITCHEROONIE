@@ -218,6 +218,20 @@ public static class GameInputTests
         Verify(!differentChatWindow.Typing && !differentChatWindow.Active,
             "a complete reset clears known typing and ownership together");
 
+        var chatOnly = new GameInputController();
+        frame = chatOnly.Step(game with { ChatToggle = true, ActivateClick = true, LeftDown = true, Forward = true, DeltaX = 90 }, false, 1, observeChat: true);
+        Verify(chatOnly.Typing && !chatOnly.Active && Neutral(frame),
+            "spin-only chat observation cannot acquire held gameplay or mouse movement");
+        frame = chatOnly.Step(game with { ChatCancel = true, LeftDown = true, Forward = true, ToggleMenu = true }, false, 1, observeChat: true);
+        Verify(!chatOnly.Typing && !chatOnly.Active && !chatOnly.MenuNavigation && Neutral(frame),
+            "spin-only cancellation clears chat without opening menus or asserting held inputs");
+        frame = chatOnly.Step(game with { ActivateClick = true, LeftDown = true, Forward = true, DeltaY = 90 }, false, 1, observeChat: true);
+        Verify(!chatOnly.Active && Neutral(frame), "chat observation alone never grants movement or cursor authority");
+        frame = chatOnly.Step(game with { LeftDown = true, Forward = true }, true, 1);
+        Verify(!chatOnly.Active && Neutral(frame), "returning to Desktop still needs a fresh authenticated click");
+        frame = chatOnly.Step(game with { Focused = false, ChatToggle = true }, false, 1, observeChat: true);
+        Verify(!chatOnly.Typing && Neutral(frame), "unfocused samples cannot change even the spin-only chat state");
+
         var focus = Ready();
         frame = focus.Step(game with { Focused = false, LeftDown = true, Forward = true, DeltaX = 40 }, true, 1);
         Verify(Neutral(frame) && !focus.Active, "focus loss immediately clears ownership and output");

@@ -22,6 +22,6 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: VRC-SWITCHEROONIE-unsigned-build
-          path: dist/VRC-SWITCHEROONIE-0.2.1-win-x64.zip
+          path: dist/VRC-SWITCHEROONIE-0.2.2-win-x64.zip
           if-no-files-found: error
           retention-days: 14

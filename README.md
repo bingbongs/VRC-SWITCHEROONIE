@@ -2,7 +2,7 @@
 
 A small Windows app for switching an existing SteamVR VRChat session between your headset and mouse/keyboard controls.
 
-**Experimental.** The first test route is PICO Swan through Virtual Desktop with physical controllers. Start VRChat in VR and keep the PCVR connection alive. Headset-free VRChat startup and converting an existing native desktop session into VR are still under development.
+**Experimental.** The first test route is PICO Swan through Virtual Desktop with physical controllers. Tracking uses SteamVR device classes and roles rather than vendor names; Steam Link, PICO Connect and other routes need their own live tests. Start VRChat in VR and keep the PCVR connection alive. Headset-free VRChat startup and converting an existing native desktop session into VR are still under development.
 
 ![VR panel](docs/screenshots/main-vr.png)
 ![Desktop panel](docs/screenshots/main-desktop.png)
@@ -58,6 +58,8 @@ Enable **speeeeeeen** below Credits in Settings. The choice is remembered; motio
 Rotation builds speed while held and slows down after release. The opposite direction brakes faster. Num Lock can be on or off. Controls work in VR and Desktop while VRChat is foreground; typing, focus loss and emergency release stop motion.
 
 **May cause motion sickness.** Start slowly. The feature rotates the tracked head, controllers and generic trackers together around a body pivot. Avatar behavior depends on VRChat's IK and is experimental; it does not change avatar files or calibration.
+
+Desktop suspends SteamVR generic body trackers so VRChat can use its non-FBT animation; VR restores their physical poses. Full-body fallback and restoration are still awaiting the repaired build's live check. OSC-only body trackers sent directly to VRChat need a separate sender/relay path.
 
 ![Help and credits](docs/screenshots/help.png)
 ![speeeeeeen](docs/screenshots/spin.png)

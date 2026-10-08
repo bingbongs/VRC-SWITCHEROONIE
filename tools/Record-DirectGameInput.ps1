@@ -43,6 +43,11 @@ function Get-Age($Value) {
     } catch { }
     return $null
 }
+function Get-BoundedUnsigned($Value, [uint64]$Maximum) {
+    $taskCount = Get-Unsigned $Value
+    if ($null -ne $taskCount -and $taskCount -le $Maximum) { return $taskCount }
+    return $null
+}
 function Get-SpinSpeed($Value) {
     if ($null -eq $Value -or $Value -is [string] -or $Value -is [bool]) { return $null }
     try {
@@ -140,6 +145,7 @@ try {
             $taskSample.spin = [ordered]@{
                 enabled = Get-Boolean $taskStatus.SpinEnabled; active = Get-Boolean $taskStatus.SpinActive
                 nativeActive = Get-Boolean $taskStatus.NativeSpinActive
+                blockReason = Get-BoundedUnsigned $taskStatus.NativeSpinBlockReason 3
                 rollRadiansPerSecond = Get-SpinSpeed $taskStatus.SpinRollSpeed; pitchRadiansPerSecond = Get-SpinSpeed $taskStatus.SpinPitchSpeed
             }
             $taskSample.native = [ordered]@{
@@ -148,6 +154,8 @@ try {
                 menuPressed = Get-Boolean $taskStatus.NativeMenuPressed; lastInputError = Get-Unsigned $taskStatus.NativeLastInputError
                 effectiveActions = Get-Unsigned $taskStatus.NativeEffectiveActions; inputArmed = Get-Boolean $taskStatus.NativeInputArmed
                 physicalSamples = Get-Unsigned $taskStatus.PhysicalSamples; routedSamples = Get-Unsigned $taskStatus.RoutedSamples
+                genericTrackersAvailable = Get-BoundedUnsigned $taskStatus.NativeGenericTrackerAvailable 64
+                genericTrackersSuspended = Get-BoundedUnsigned $taskStatus.NativeGenericTrackerSuspended 64
             }
         } catch {
             ++$taskFailures

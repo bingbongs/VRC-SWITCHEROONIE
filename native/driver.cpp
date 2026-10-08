@@ -285,6 +285,7 @@ class Provider final : public vr::IServerTrackedDeviceProvider
         std::array<sw::DeviceRole, vr::k_unMaxTrackedDeviceCount> roles{};
         std::array<uint64_t, vr::k_unMaxTrackedDeviceCount> containers{};
         std::array<bool, vr::k_unMaxTrackedDeviceCount> bodyTracked{};
+        std::array<bool, vr::k_unMaxTrackedDeviceCount> genericTracked{};
         int left = 0, right = 0;
         for (uint32_t index = 0; index < vr::k_unMaxTrackedDeviceCount; ++index)
         {
@@ -297,7 +298,12 @@ class Provider final : public vr::IServerTrackedDeviceProvider
             if (error == vr::TrackedProp_Success &&
                 sw::EligibleBodyTrackedClass(vr::ETrackedDeviceClass(deviceClass)))
             {
-                if (!sw::EligiblePhysicalRoleIdentity(*p, container))
+                // Generic body sources are vendor-neutral: the public class,
+                // current nonzero container and independently captured pose are
+                // authority. Optional model/vendor strings never grant access.
+                genericTracked[index] = container &&
+                    sw::EligibleGenericTrackerClass(vr::ETrackedDeviceClass(deviceClass));
+                if (!genericTracked[index] && !sw::EligiblePhysicalRoleIdentity(*p, container))
                     continue;
                 bodyTracked[index] = true;
             }
@@ -329,6 +335,7 @@ class Provider final : public vr::IServerTrackedDeviceProvider
                 role = sw::DeviceRole::Other;
             router_.SetRole(index, role, containers[index]);
             router_.SetBodySpinEligible(index, bodyTracked[index]);
+            router_.SetGenericTracker(index, genericTracked[index]);
         }
     }
     void Publish()

@@ -249,8 +249,12 @@ int Record(vr::IVRSystem *system, sw::Mapping &mapping, const std::string &file,
             << ",\"effectiveNativeActions\":" << status.effectiveNativeActions
             << ",\"inputArmed\":" << status.inputArmed
             << ",\"bodySpinActive\":" << status.bodySpinActive
+            << ",\"bodySpinBlockReason\":" << status.bodySpinBlockReason
+            << ",\"bodySpinAttemptGeneration\":" << status.bodySpinAttemptGeneration
             << ",\"bodySpinGeneration\":" << status.bodySpinGeneration
             << ",\"bodySpinSamples\":" << status.bodySpinSamples
+            << ",\"genericTrackerAvailable\":" << status.genericTrackerAvailable
+            << ",\"genericTrackerSuspended\":" << status.genericTrackerSuspended
             << ",\"proximityKnown\":" << status.proximityKnown
             << ",\"proximityActive\":" << status.proximityActive
             << ",\"proximityAgeMs\":";
@@ -382,8 +386,12 @@ int Run(int argc, char **argv)
                << ",\"effectiveNativeActions\":" << status.effectiveNativeActions
                << ",\"inputArmed\":" << status.inputArmed
                << ",\"bodySpinActive\":" << status.bodySpinActive
+               << ",\"bodySpinBlockReason\":" << status.bodySpinBlockReason
+               << ",\"bodySpinAttemptGeneration\":" << status.bodySpinAttemptGeneration
                << ",\"bodySpinGeneration\":" << status.bodySpinGeneration
                << ",\"bodySpinSamples\":" << status.bodySpinSamples
+               << ",\"genericTrackerAvailable\":" << status.genericTrackerAvailable
+               << ",\"genericTrackerSuspended\":" << status.genericTrackerSuspended
                << ",\"proximityKnown\":" << status.proximityKnown
                << ",\"proximityActive\":" << status.proximityActive
                << ",\"proximityAgeMs\":";

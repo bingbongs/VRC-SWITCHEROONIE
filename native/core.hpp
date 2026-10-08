@@ -38,11 +38,13 @@ struct PoseSnapshot
     vr::DriverPose_t pose{};
     int64_t timestamp{};
     uint64_t epoch{};
+    uint64_t container{};
 };
 class PoseStore
 {
   public:
-    bool Write(const PoseSnapshot &) noexcept;
+    bool Write(const PoseSnapshot &, void (*publish)(void *) noexcept = nullptr,
+               void *context = nullptr) noexcept;
     bool Read(PoseSnapshot &) const noexcept;
 
   private:
@@ -56,13 +58,20 @@ class Router
     void SetRole(uint32_t index, DeviceRole role, uint64_t container = 0) noexcept;
     void SetBodySpinEligible(uint32_t index, bool eligible) noexcept;
     bool BodySpinEligible(uint32_t index) const noexcept;
+    void SetGenericTracker(uint32_t index, bool eligible) noexcept;
+    bool GenericTracker(uint32_t index) const noexcept;
+    bool GenericTrackerPhysical(uint32_t index, PoseSnapshot &) const noexcept;
     DeviceRole Role(uint32_t index) const noexcept;
     DeviceRole ContainerRole(uint64_t container) const noexcept;
     void Capture(uint32_t index, const vr::DriverPose_t &original, int64_t now) noexcept;
     bool RoutePose(uint32_t index, const Request &, bool requestRead, int64_t now,
-                   int64_t frequency, vr::DriverPose_t &output, bool *spinApplied = nullptr) noexcept;
+                   int64_t frequency, vr::DriverPose_t &output, bool *spinApplied = nullptr,
+                   bool *trackerSuspended = nullptr) noexcept;
     static bool BodySpinActive(const Request &, bool requestRead, int64_t now, int64_t frequency) noexcept;
     bool BodySpinPermitted(const Request &, bool requestRead, int64_t now, int64_t frequency) const noexcept;
+    bool TrackerAnchorsReady(uint64_t epoch) const noexcept;
+    BodySpinBlockReason SpinBlockReason(const Request &, bool requestRead,
+                                      int64_t now, int64_t frequency) const noexcept;
     bool OriginalForRestore(uint32_t index, int64_t now, int64_t frequency,
                             vr::DriverPose_t &output) const noexcept;
     bool Desktop(const Request &, bool requestRead, int64_t now, int64_t frequency) noexcept;
@@ -85,12 +94,28 @@ class Router
     bool Evaluate(const Request &, bool, int64_t, int64_t) noexcept;
     bool Synthetic(DeviceRole, const PoseSnapshot &, const PoseSnapshot &, const Request &,
                    vr::DriverPose_t &) noexcept;
+    void CaptureTrackerAnchors(uint64_t epoch, int64_t now, int64_t frequency) noexcept;
+    BodySpinBlockReason LatchedSpinBlock(const Request &) const noexcept;
+    void LatchSpinBlock(const Request &, BodySpinBlockReason) const noexcept;
+    void RetireSpinGeneration(uint64_t generation, BodySpinBlockReason) const noexcept;
+    void RetireCurrentSpin(BodySpinBlockReason) const noexcept;
+    bool RaiseSpinFloor(std::atomic<uint64_t> &, uint64_t generation) const noexcept;
     std::array<std::atomic<DeviceRole>, vr::k_unMaxTrackedDeviceCount> roles_{};
     std::array<std::atomic<uint64_t>, vr::k_unMaxTrackedDeviceCount> containers_{};
     std::array<std::atomic<uint64_t>, vr::k_unMaxTrackedDeviceCount> bodySpinContainers_{};
+    std::array<std::atomic<uint64_t>, vr::k_unMaxTrackedDeviceCount> genericTrackerContainers_{};
+    std::array<std::atomic<uint64_t>, vr::k_unMaxTrackedDeviceCount> trackerAnchorContainers_{};
+    std::array<PoseStore, vr::k_unMaxTrackedDeviceCount> trackerAnchors_{};
+    std::atomic<uint64_t> trackerAnchorEpoch_{};
+    std::atomic<bool> trackerAnchorComplete_{};
     std::array<PoseStore, vr::k_unMaxTrackedDeviceCount> poses_{};
     std::array<std::atomic<bool>, vr::k_unMaxTrackedDeviceCount> poseValid_{};
+    std::array<std::atomic<uint64_t>, vr::k_unMaxTrackedDeviceCount> capturedContainers_{};
+    std::array<std::atomic<int64_t>, vr::k_unMaxTrackedDeviceCount> captureTimestamps_{};
+    std::array<std::atomic<uint64_t>, vr::k_unMaxTrackedDeviceCount> captureInvalidVersions_{};
+    std::array<std::atomic<uint64_t>, vr::k_unMaxTrackedDeviceCount> capturedInvalidVersions_{};
     std::atomic<int64_t> headTimestamp_{};
+    std::atomic<uint64_t> headContainer_{};
     std::atomic<bool> headValid_{};
     std::atomic_flag entry_ = ATOMIC_FLAG_INIT;
     PoseStore anchor_{};
@@ -102,6 +127,9 @@ class Router
     std::atomic<Error> error_{Error::NoHead};
     std::atomic<uint64_t> routed_{}, physical_{};
     std::atomic<uint64_t> bodySpinGeneration_{}, bodySpinSamples_{};
+    mutable std::atomic<uint64_t> spinAdmittedGeneration_{}, spinRetiredGeneration_{};
+    mutable std::atomic<uint64_t> spinIdentityRefusalGeneration_{}, spinDesktopGeneration_{};
+    mutable std::atomic<bool> spinAdmissionFault_{};
 };
 Control ClassifyControl(const char *name) noexcept;
 float DesiredValue(Control, DeviceRole, const Request &) noexcept;

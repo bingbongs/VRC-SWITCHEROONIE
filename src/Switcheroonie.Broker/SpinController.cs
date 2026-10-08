@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace Switcheroonie.Broker;
 
 public readonly record struct SpinQuaternion(double W = 1, double X = 0, double Y = 0, double Z = 0)
@@ -27,6 +29,7 @@ public readonly record struct SpinQuaternion(double W = 1, double X = 0, double 
 // preference: a new process, focus loss or emergency always starts at identity.
 public sealed class SpinController
 {
+    static long generationFloor;
     public const double MaximumSpeed = 5.2, Acceleration = 1.8, CoastBrake = 4.5, OppositeBrake = 8;
     public bool Active { get; private set; }
     public bool Typing { get; private set; }
@@ -35,12 +38,25 @@ public sealed class SpinController
     public double PivotX { get; private set; }
     public double PivotY { get; private set; }
     public double PivotZ { get; private set; }
-    public ulong Generation { get; private set; }
+    // QPC survives a broker restart on the same boot. The process-wide floor
+    // also makes separate controllers and same-clock-tick activations distinct.
+    public ulong Generation { get; private set; } = NextGeneration();
     public SpinQuaternion Rotation { get; private set; } = SpinQuaternion.Identity;
     SpinQuaternion local = SpinQuaternion.Identity, facing = SpinQuaternion.Identity;
     long window, typingWindow;
     double lastSeconds;
     bool haveTime;
+
+    static ulong NextGeneration()
+    {
+        while (true)
+        {
+            long previous = Volatile.Read(ref generationFloor);
+            if (previous == long.MaxValue) throw new InvalidOperationException("Spin generation exhausted.");
+            long next = Math.Max(previous + 1, Math.Max(1, Stopwatch.GetTimestamp()));
+            if (Interlocked.CompareExchange(ref generationFloor, next, previous) == previous) return (ulong)next;
+        }
+    }
 
     public void Reset()
     {
@@ -55,7 +71,7 @@ public sealed class SpinController
         double rate = direction == 0 ? CoastBrake : current * direction < 0 ? OppositeBrake : Acceleration;
         return Approach(current, direction * MaximumSpeed, rate * dt);
     }
-    public void Step(GameInputSample sample, bool eligible, bool desktop, bool desktopTyping, DriverSnapshot head, double seconds)
+    public void Step(GameInputSample sample, bool eligible, bool sharedChatState, bool observedTyping, DriverSnapshot head, double seconds)
     {
         if (!eligible || sample.Emergency || !sample.Focused || sample.Window == 0 || !double.IsFinite(seconds))
         { Reset(); return; }
@@ -65,7 +81,7 @@ public sealed class SpinController
         typingWindow = sample.Window;
         if (window != 0 && window != sample.Window) Reset();
         window = sample.Window;
-        if (desktop) Typing = desktopTyping;
+        if (sharedChatState) Typing = observedTyping;
         else if (sample.ChatCancel) Typing = false;
         else if (sample.ChatToggle) Typing = !Typing;
         if (Typing) { Reset(); return; }
@@ -75,7 +91,7 @@ public sealed class SpinController
         {
             if (Active) { Reset(); return; }
             if (!head.PhysicalPoseValid) return;
-            Active = true; ++Generation;
+            Generation = NextGeneration(); Active = true;
             PivotX = head.HeadX; PivotY = head.HeadY - .75; PivotZ = head.HeadZ;
             var q = new SpinQuaternion(head.HeadW, head.HeadQx, head.HeadQy, head.HeadQz).Normalized;
             // Horizontal facing basis, independent of the user's initial tilt.

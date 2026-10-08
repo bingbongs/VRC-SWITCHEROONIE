@@ -38,6 +38,7 @@ public sealed class SwitcheroonieRecordOnlyFixture : IDisposable {
         "\"NativeMenuRisingEdges\":"+number+",\"NativeMenuPressed\":"+menu.ToString().ToLowerInvariant()+","+
         "\"NativeEffectiveActions\":"+(menu?4:0)+",\"NativeInputArmed\":true,\"NativeLastInputError\":0,"+
         "\"NativeCapabilityFlags\":63,\"NativeInputCoverage\":255,\"NativeMenuPath\":1,"+
+        "\"NativeGenericTrackerAvailable\":10,\"NativeGenericTrackerSuspended\":"+(menu?10:0)+",\"NativeSpinBlockReason\":"+(number==6?3:(number==3?99:1))+","+
         "\"PhysicalSamples\":100,\"RoutedSamples\":100,\"OwnerWindow\":123456,"+
         "\"GameInputDetail\":\"secret-world-and-player\",\"Detail\":\"private-file-path\",\"Display\":\"private-file-path\"}}";
       }
@@ -69,6 +70,7 @@ try {
     Check (@($taskValid | Where-Object { $_.native.menuPressed -and $_.native.effectiveActions -eq 4 }).Count -gt 0 -and @($taskValid | Where-Object { -not $_.native.menuPressed -and $_.native.effectiveActions -eq 0 }).Count -gt 0) 'Native menu press and neutral levels are preserved'
     Check ($taskValid[-1].native.menuRisingEdges -gt $taskValid[0].native.menuRisingEdges -and $taskValid[0].readiness.headAgeMilliseconds -eq 3.5) 'Menu edge counters and physical pose ages survive masking'
     Check ($taskText -notmatch 'secret-world-and-player|private-file-path|123456|OwnerWindow|GameInputDetail') 'Free-form messages and window handles never enter the log'
+    Check ($taskValid[0].native.genericTrackersAvailable -eq 10 -and @($taskValid | Where-Object { $_.native.genericTrackersSuspended -eq 10 }).Count -gt 0 -and $taskValid[0].spin.blockReason -eq 1 -and @($taskValid | Where-Object { $_.spin.blockReason -eq 3 }).Count -gt 0 -and @($taskValid | Where-Object { $null -eq $_.spin.blockReason }).Count -gt 0) 'Bounded tracker counters and native recovery reasons survive while unknown values are masked'
     Check (@($taskSamples | Where-Object { $_.failure -eq 'BrokerUnavailableOrInvalidReply' }).Count -ge 2) 'Malformed and oversized replies are masked failures with continued sampling'
     Check (@($taskSamples | Where-Object { $null -ne $_.processes }).Count -eq 0) 'Private fixture does not inventory live applications'
     Write-Host ('Direct game-input recorder: {0} checks, zero failures.' -f $taskChecks)

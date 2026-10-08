@@ -1,19 +1,20 @@
 # Testing
 
-Version 0.2.1 is experimental. It fixes a Settings crash found during the first live 0.2.0 check. Software tests and screenshots do not establish visible headset or VRChat behavior.
+Version 0.2.2 is an experimental candidate repairing live full-body behavior. Version 0.2.1 fixed a Settings crash found during the first live 0.2.0 check. Software tests and screenshots do not establish visible headset or VRChat behavior.
 
 | Check | Current result |
 |---|---|
-| Managed controls, routing, cursor ownership and spin | 395 checks passed, including the packaged Common/Broker binaries |
-| Native routing, startup, isolated hooks, driver resources and scene self-test | All 9 suites passed |
-| Signed updates, hostile archives and interrupted recovery | 106 fixture checks passed |
+| Managed controls, routing, cursor ownership and spin | 0.2.2 source candidate: 440 checks passed; exact final package validation follows the source build |
+| Native routing, startup, isolated hooks, driver resources and scene self-test | 0.2.2 source candidate: all 9 suites passed, including 1,736 counted assertions |
+| Signed updates, hostile archives and interrupted recovery | 123 fixture checks passed, including signed first-install origin retention |
 | Compact panel, startup ownership and resident lifetime | 94 fixture checks passed, including 13 Settings visual lifecycle regressions |
 | Offscreen layout at 100/150/200% DPI and minimum size | 21 fixtures passed |
 | Installer journal, relocation and canonical state | 20 + 18 + 9 fixture checks passed |
-| Packaged broker/helper processes | Exact final local package: 12 passed, 0 failed, 0 not run; one documented OSC limitation. P01–P06 also passed on fresh Windows CI |
+| Packaged broker/helper processes | Exact 0.2.0 local package: 12 passed, 0 failed, 0 not run; one documented OSC limitation. P01–P06 also passed on fresh Windows CI; 0.2.2 closed-session acceptance pending |
 | New cursor presentation, posture toggles, M/Esc menus and wrists in VRChat | Live retest pending |
 | Whole-avatar spinning, calibration and prediction | Live test pending |
-| Published update download and staging | Real GitHub download, signature and all 456 files verified in a private store |
+| Published update download and staging | Production 0.2.1 download, signature and all 456 files verified; signed 0.2.0 baseline retained, active selection unchanged |
+| SteamVR full-body suspension and restoration | Live 0.2.0 Desktop check failed with ten Virtual Desktop trackers; 0.2.2 repair awaiting live check |
 | Windows sign-in and live update activation/rollback | Separate acceptance tests pending |
 | Headset-free VRChat startup | Unsupported |
 
@@ -30,6 +31,8 @@ After the user launched SteamVR through Virtual Desktop, the loaded driver match
 Opening Settings in 0.2.0 crashed the panel before the control test. The replacement checks reproduce that original exception using the actual Settings controls before template attachment, then verify the repaired attach, scroll, hide, minimize and reattach paths. The patched 0.2.1 panel was reopened against the continuing broker and native driver; opening Settings and visible controls still need human confirmation.
 
 The public download check used the exact final updater with its embedded production key and a private simulated older selection. It staged signed release 0.2.0, sequence 1, and refused activation through its fixture safety gate. It changed no live driver, application or user configuration. This proves delivery and staging; it does not claim a live update or prior-version rollback.
+
+The exact 0.2.1 updater also downloaded and verified the real signed 0.2.1 release into the production update store. It independently retained the original signed 0.2.0 delivery, preserved the original stable launcher, left the installed driver unchanged and deferred activation while the game/runtime/harness were running. No process was stopped for this check. Live version activation and rollback remain separate acceptance tests.
 
 Screenshots are rendered offscreen with illustrative connection states. Their fixture branches do not connect to the broker, register hotkeys, capture input, write startup registration or download updates.
 
