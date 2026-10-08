@@ -109,11 +109,21 @@ static class AutomaticHarnessTests
                 return status.DriverAlive && status.RoutingReady && status.Mode == "Physical" &&
                     status.ManualMode == "Physical" && status.Epoch == manualEpoch;
             }), "Headset removal cannot override the user's committed manual physical preference; fresh same-epoch physical acknowledgement recovers");
-            check(Volatile.Read(ref manualIntentLost) == 0 && Volatile.Read(ref desktopRequested) == 0 && Volatile.Read(ref desktopObserved) == 0,
-                "Every monitored tick preserves manual intent and never requests or coherently observes desktop routing after manual physical commitment");
-            var telemetry = channel.Read();
-            check(telemetry.ProximityKnown && !telemetry.ProximityActive && telemetry.LeftAge == 3 && telemetry.RightAge == 4 && telemetry.ProximityAge == 10000,
+            DriverSnapshot telemetry = new();
+            bool telemetryReady = await Until(() =>
+            {
+                ObserveManual();
+                var sample = channel.Read();
+                if (sample.Alive && sample.Desktop) Interlocked.Exchange(ref desktopObserved, 1);
+                if (!sample.Alive || !sample.HasHead || sample.HeadAge is < 0 or >= 200 ||
+                    !double.IsFinite(sample.HeadAge) || sample.Error != 0 || sample.Epoch != manualEpoch || sample.Desktop) return false;
+                telemetry = sample;
+                return true;
+            });
+            check(telemetryReady && telemetry.ProximityKnown && !telemetry.ProximityActive && telemetry.LeftAge == 3 && telemetry.RightAge == 4 && telemetry.ProximityAge == 10000,
                 "Additive independent wear and controller ages decode coherently without equating event age with a heartbeat");
+            check(Volatile.Read(ref manualIntentLost) == 0 && Volatile.Read(ref desktopRequested) == 0 && Volatile.Read(ref desktopObserved) == 0,
+                "Every monitored tick and telemetry wait preserves manual intent and never requests or coherently observes desktop routing after manual physical commitment");
             check((await engine.ExecuteAsync(new() { Name = "SetDesktopHeight", Height = 0.05 })).Accepted,
                 "Desktop height can be saved while physical tracking is selected");
         }
