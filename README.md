@@ -2,7 +2,7 @@
 
 A small Windows app for switching an existing SteamVR VRChat session between your headset and mouse/keyboard controls.
 
-**Experimental.** The first test route is PICO Swan through Virtual Desktop with physical controllers. Tracking uses SteamVR device classes and roles rather than vendor names; Steam Link, PICO Connect and other routes need their own live tests. Start VRChat in VR and keep the PCVR connection alive. Headset-free VRChat startup and converting an existing native desktop session into VR are still under development.
+**Experimental.** The first test route is PICO 4 in through Virtual Desktop with physical controllers. Tracking uses SteamVR device classes and roles rather than vendor names; Steam Link, PICO Connect and other routes need their own live tests. Start VRChat in VR and keep the PCVR connection alive. Headset-free VRChat startup and converting an existing native desktop session into VR are still under development.
 
 ![VR panel](docs/screenshots/main-vr.png)
 ![Desktop panel](docs/screenshots/main-desktop.png)
