@@ -215,12 +215,7 @@ public partial class MainWindow : Window
         try
         {
             _startedBrokerProcess?.Dispose();
-            _startedBrokerProcess = Process.Start(new ProcessStartInfo(brokerPath)
-            {
-                WorkingDirectory = AppContext.BaseDirectory,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
+            _startedBrokerProcess = Process.Start(BrokerLaunch.Create());
             ServiceStateText.Text = "Starting the background service…";
             MessageText.Text = "Starting the local service. Your current session and selected mode stay unchanged.";
         }

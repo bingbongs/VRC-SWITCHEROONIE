@@ -1,25 +1,27 @@
 # Testing
 
-Version 0.2.3 adds a standalone download with bundled dependencies, an in-app first setup button, bounded window validation and an owned invisible cursor shape. Its VR spin keeps natural headset movement. Software tests and screenshots do not establish visible headset or VRChat behavior. The live 0.2.2 findings below remain the hardware authority until a replacement is checked.
+Version 0.2.4 extends the 0.2.3 standalone download with a cooperative service lifetime: explicit tray Quit retires the service that panel created, allowing staged updates after normal shutdown. Version 0.2.3 added bundled dependencies, in-app first setup, bounded window validation, an owned invisible cursor shape and VR spin that keeps natural headset movement. Software tests and screenshots do not establish visible headset or VRChat behavior. The live 0.2.2 findings below remain the hardware authority until a replacement is checked.
 
 | Check | Current result |
 |---|---|
-| Managed controls, routing, cursor ownership and spin | Complete 0.2.3 source suite: 466 checks passed, including cached-window identity and invisible-shape fixtures |
+| Managed controls, routing, cursor ownership and spin | 0.2.4 isolated source suite: 517 checks passed, including authenticated panel lifetime, request draining, disposal failures and acknowledged input fixtures |
 | Native routing, startup, isolated hooks, driver resources and scene self-test | 0.2.3 isolated source build: all 9 suites passed, including 1,772 counted assertions |
 | Signed updates, hostile archives and interrupted recovery | 0.2.3 source: 194 fixture checks passed, including same-origin repair, complete driver resources, bounded launch preparation and cloud-directory tag checks |
-| Compact panel, startup ownership and resident lifetime | 0.2.3: 145 fixture checks passed, including injected one-click setup and retry behavior |
+| Compact panel, startup ownership and resident lifetime | 0.2.4: 153 fixture checks passed, including exact sibling broker launch, injected one-click setup and retry behavior; 8 harmless real process checks passed for retained parent identity and cooperative exit |
 | Offscreen layout at 100/150/200% DPI and minimum size | 30 fixtures passed |
 | Installer journal, relocation, canonical state and runtime guards | 115 fixture checks passed under Windows PowerShell 5.1; no live installation |
 | Standalone launcher and archive | 32 launcher fixtures passed; file-symlink creation skipped by Windows error1314. Complete payload pins, dependency/runtime tampering and harmless child launch covered; archive suite: 10 checks passed |
 | Packaged broker/helper processes | Exact signed 0.2.2: 12 passed, 0 failed, 0 not run; one documented OSC limitation. 0.2.3 source: 5 private OSC checks passed; public-pipe cases deferred because the user's game/runtime/broker are active |
 | Cursor, menus and wrists in VRChat | 0.2.2 cursor hiding, lag and hand aiming/rotation failed. New cursor/cache code needs a live check |
 | Spinning, calibration and prediction | User confirms spin works; requested VR-view preservation is new in 0.2.3 and needs a live check. Locomotion animation can remain latched in VRChat |
-| Published update download and activation | Production signed 0.2.2 selected with matched driver after user shutdown; signed 0.2.0/0.2.1 history retained; canonical config/journal/registration/bootstrap/startup preserved |
+| Published update download and activation | Public signed 0.2.3 download and complete standalone inventory verified; existing 0.2.2 updater staged it in the production store. Selection and installed driver remain 0.2.2 while the session runs; configuration and earlier signed history preserved |
 | SteamVR full-body suspension and restoration | All 10 VD generic trackers independently observed disconnected/invalid in Desktop. Human body movement/posture and VR return passed after disabling VRChat freeze |
 | Windows sign-in and live update activation/rollback | Separate acceptance tests pending |
 | Headset-free VRChat startup | Unsupported |
 
 The managed tests use private mappings and temporary configuration. They cover stale or missing source rejection, committed epochs, input ownership, shared menu state, posture continuity, short key presses, chat, focus loss, emergency release, cursor handoff and bounded spin. Native hook tests use an isolated fake host and input implementation. Update tests use temporary stores, fixture signing keys, fake HTTP and private driver/registration files. None of these tests launch VRChat or change the live headset session.
+
+The 0.2.4 lifetime checks validate the launching panel's creator PID, creation time, SID, Windows session and exact sibling image, then retain its process handle. Hidden panels stay resident; parent exit cancels the service, drains accepted requests and disposes input helpers even when a producer fails. The eight real process checks use harmless private executable siblings, without a production broker or VR input. Actual tray Quit, installed update activation and the new driver's visible behavior remain separate live acceptance checks.
 
 The process harness starts only processes it owns. Public-pipe tests defer if a user broker or SteamVR runtime is active. After normal shutdown, the exact final local package passed real pipe validation, saturation/recovery, emergency release, separate OSC helper and broker-backup neutralization checks. It loaded its bundled .NET runtime with external runtime roots disabled. OSC used loopback mock receivers and private simulated driver/lifecycle mappings; this does not establish VRChat receipt, physical tracking, cursor behavior or headset presentation.
 

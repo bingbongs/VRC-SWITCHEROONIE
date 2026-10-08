@@ -23,7 +23,7 @@ jobs:
         with:
           name: VRC-SWITCHEROONIE-unsigned-build
           path: |
-            dist/VRC-SWITCHEROONIE-0.2.3-win-x64.zip
-            dist/VRC-SWITCHEROONIE-0.2.3-portable.zip
+            dist/VRC-SWITCHEROONIE-0.2.4-win-x64.zip
+            dist/VRC-SWITCHEROONIE-0.2.4-portable.zip
           if-no-files-found: error
           retention-days: 14

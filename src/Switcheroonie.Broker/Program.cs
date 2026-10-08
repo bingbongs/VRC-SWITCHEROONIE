@@ -4,6 +4,11 @@ using System.Text.Json;
 using Switcheroonie;
 using Switcheroonie.Broker;
 
+if (!BrokerLifetimePolicy.TryParse(args, Environment.ProcessId, out int? uiParentPid))
+{ Console.Error.WriteLine("Broker refused an invalid UI lifetime argument."); Environment.ExitCode = 2; return; }
+using var uiParent = uiParentPid is int requestedParent ? BrokerUiParent.Acquire(requestedParent) : null;
+if (uiParentPid is not null && uiParent is null)
+{ Console.Error.WriteLine("Broker could not verify its packaged UI parent."); Environment.ExitCode = 2; return; }
 if (args.Contains("--osc-watchdog")) { await OscWatchdog.RunAsync(args.FirstOrDefault(a => a.StartsWith("--map="))?[6..]); return; }
 var cursorArgument = args.FirstOrDefault(a => a.StartsWith("--cursor-watchdog=", StringComparison.Ordinal));
 if (cursorArgument is not null)
@@ -40,11 +45,17 @@ void EnsureWatchdog()
 }
 EnsureWatchdog();
 using var connections = new SemaphoreSlim(8, 8);
-var ticker = Task.Run(async () =>
+var clients = new BrokerClientLifetime();
+var ticker = Task.Run(() => BrokerServiceLifetime.RunProducerAsync(async () =>
 {
     using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(10));
-    while (await timer.WaitForNextTickAsync(cancellation.Token)) { engine.Tick(); EnsureWatchdog(); }
-}, cancellation.Token);
+    while (await timer.WaitForNextTickAsync(cancellation.Token))
+    {
+        uiParent?.Poll(cancellation);
+        if (cancellation.IsCancellationRequested) break;
+        engine.Tick(); EnsureWatchdog();
+    }
+}, cancellation), cancellation.Token);
 Console.WriteLine("VRC-SWITCHEROONIE broker ready. No VR application or runtime is launched.");
 try
 {
@@ -54,7 +65,10 @@ try
             PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly, 16384, 32768);
         try { await pipe.WaitForConnectionAsync(cancellation.Token); }
         catch { pipe.Dispose(); throw; }
-        if (connections.Wait(0)) _ = RunClientAsync(pipe);
+        if (connections.Wait(0))
+        {
+            if (!clients.TryRun(() => RunClientAsync(pipe))) { pipe.Dispose(); connections.Release(); }
+        }
         else
         {
             using (pipe)
@@ -67,9 +81,12 @@ try
     }
 }
 catch (OperationCanceledException) { }
-cancellation.Cancel();
-try { await ticker; } catch (OperationCanceledException) { }
-watchdog?.Dispose();
+finally
+{
+    // Cancel pipe IO and stop the producer, then drain already accepted bounded
+    // commands before engine/channel disposal. No late request can rearm input.
+    await BrokerServiceLifetime.StopAsync(ticker, clients, cancellation, () => watchdog?.Dispose());
+}
 
 async Task RunClientAsync(NamedPipeServerStream pipe)
 {
@@ -80,8 +97,9 @@ async Task RunClientAsync(NamedPipeServerStream pipe)
 async Task HandleAsync(NamedPipeServerStream pipe)
 {
     using (pipe)
-    using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3)))
+    using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token))
     {
+        timeout.CancelAfter(TimeSpan.FromSeconds(3));
         try
         {
             // Read a strictly bounded UTF-8 message, never an unbounded ReadLine.
@@ -99,6 +117,7 @@ async Task HandleAsync(NamedPipeServerStream pipe)
             {
                 try
                 {
+                    timeout.Token.ThrowIfCancellationRequested();
                     var command = JsonSerializer.Deserialize<Command>(Encoding.UTF8.GetString(bytes, 0, count));
                     reply = command is null ? new(false, "Empty command.", engine.Status()) : await engine.ExecuteAsync(command);
                 }

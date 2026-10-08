@@ -536,7 +536,28 @@ public sealed class HarnessEngine : IDisposable
         finally { transition.Release(); }
     }
     Reply Remember(string id, Reply reply) { if (requests.Count >= 128) requests.Remove(requests.Keys.First()); requests[id] = reply; return reply; }
-    public void Dispose() { lock (sync) { if (disposed) return; disposed = true; ++routingGeneration; ReleaseLocked(); desktop = false; ++epoch; channel.Publish(epoch, false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, spin: spin); emergencyOsc.Dispose(); gamePlatform.Dispose(); } }
+    public void Dispose()
+    {
+        lock (sync)
+        {
+            if (disposed) return;
+            disposed = true; ++routingGeneration;
+            try
+            {
+                try { ReleaseLocked(); }
+                finally
+                {
+                    desktop = false; ++epoch;
+                    channel.Publish(epoch, false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, spin: spin);
+                }
+            }
+            finally
+            {
+                try { emergencyOsc.Dispose(); }
+                finally { gamePlatform.Dispose(); }
+            }
+        }
+    }
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int virtualKey);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);

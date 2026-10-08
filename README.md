@@ -21,7 +21,7 @@ For full-body tracking, turn off **Freeze Tracking on Disconnect** in VRChat's T
 
 ![First setup](docs/screenshots/setup.png)
 
-Closing the panel keeps it in the tray. **Start with Windows** opens it quietly at sign-in. Updates download automatically and activate after normal app/VRChat/SteamVR shutdown. No installer or forced game restart.
+Closing the panel keeps it in the tray. **Start with Windows** opens it quietly at sign-in. Updates download automatically. To apply one, close VRChat and SteamVR normally, choose **Quit VRC-SWITCHEROONIE** in the tray, wait a few seconds, then reopen the app. No installer or forced game restart.
 
 The driver currently accepts SteamVR build **25330290**. Other builds refuse activation until reviewed. See [compatibility](docs/compatibility.md) and [recovery](docs/recovery.md).
 
@@ -70,6 +70,8 @@ Desktop suspends SteamVR generic body trackers so VRChat can use its non-FBT ani
 [GitHub Releases](https://github.com/bingbongs/VRC-SWITCHEROONIE/releases) hosts the update files. The updater verifies a signed manifest and every packaged file, stages each version separately, and retains the previous version for recovery. It never replaces a loaded driver or closes VRChat, SteamVR, or Virtual Desktop. See [update details](docs/updates.md).
 
 Use **VRC-SWITCHEROONIE-Portable.zip** for the simple download. The versioned win-x64 ZIP and manifest/signature are also retained for existing automatic updaters.
+
+Version 0.2.4 makes the background service exit with the panel's explicit Quit command. An already-running service from 0.2.3 or older needs a one-time normal Windows restart before this new exit behavior can apply.
 
 ## Build
 

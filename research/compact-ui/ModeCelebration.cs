@@ -77,6 +77,7 @@ internal static class CompactSelfTests
         Check(new SettingsWindow(preview: true).HeightUpdateLifetimeFixture(), "Height edits keep update lifetime alive; explicit exit cancels it");
         SpinViewportLifecycleTests.Run(Check);
         SetupServiceTests.Run(Check);
+        BrokerLaunch.SelfTest(Check);
         return count;
     }
 }

@@ -58,5 +58,5 @@ public sealed class OscSender : IDisposable
         }
         if (!repeat) values.Clear();
     }
-    public void Dispose() { Release(); socket.Dispose(); }
+    public void Dispose() { try { Release(); } finally { socket.Dispose(); } }
 }

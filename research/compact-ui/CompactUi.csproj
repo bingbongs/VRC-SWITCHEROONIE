@@ -2,7 +2,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><AssemblyName>Switcheroonie.UI</AssemblyName>
-    <Product>VRC-SWITCHEROONIE</Product><Version>0.2.3</Version><ApplicationManifest>app.manifest</ApplicationManifest>
+    <Product>VRC-SWITCHEROONIE</Product><Version>0.2.4</Version><ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Switcheroonie.Common/Switcheroonie.Common.csproj" />
@@ -10,6 +10,7 @@
     <Compile Include="../../src/Switcheroonie.UI/ResidentTray.cs" Link="ResidentTray.cs" />
     <Compile Include="../../src/Switcheroonie.UI/StartupRegistration.cs" Link="StartupRegistration.cs" />
     <Compile Include="../../src/Switcheroonie.UI/BrokerRestartPolicy.cs" Link="BrokerRestartPolicy.cs" />
+    <Compile Include="../../src/Switcheroonie.UI/BrokerLaunch.cs" Link="BrokerLaunch.cs" />
     <Resource Include="Assets/mascot-atlas.clean.png" />
     <Resource Include="Assets/mascot-starfish.png" />
   </ItemGroup>

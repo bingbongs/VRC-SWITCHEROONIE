@@ -1,6 +1,6 @@
 # Current limits
 
-Version 0.2.3 is an experimental Windows/SteamVR portable candidate. Software checks and rendered previews are separate from in-headset and VRChat behavior. Version 0.2.0 had a Settings-opening crash; use 0.2.1 or newer.
+Version 0.2.4 is an experimental Windows/SteamVR portable candidate. Software checks and rendered previews are separate from in-headset and VRChat behavior. Version 0.2.0 had a Settings-opening crash; use 0.2.1 or newer.
 
 - **Controls still need repair/live verification:** 0.2.2 cursor hiding, mouse-look responsiveness, menu-pointer aiming and resting hand rotation failed the human check. C/Z posture and FBT fallback/return passed with freeze disabled. VRChat locomotion animation can remain latched after switching or spinning even though its persisted FBT locomotion preference remains off.
 - **speeeeeeen is experimental:** Desktop rotates the view and tracked rig; the 0.2.3 VR change preserves natural headset movement while rotating hands/body. That view correction needs its own live check. Avatar root behavior, VRChat IK, calibration and prediction remain experimental. It may cause motion sickness.
@@ -11,5 +11,6 @@ Version 0.2.3 is an experimental Windows/SteamVR portable candidate. Software ch
 - **Tracker/audio coexistence needs testing:** existing roles, calibration and audio settings are retained. Face/eye tracking, continuous calibration, haptics, stations and avatar changes have no complete device-level validation.
 - **OSC is optional:** individual producer/helper failures are covered; losing every sender can leave the receiver's previous state latched.
 - **Updates wait for a safe session boundary:** they download automatically, but loaded drivers are not replaced and games are never forced closed. Rollback selects a previously verified version.
+- **An older independent service needs its first shutdown:** 0.2.3 and older tray exit leaves the broker running. New 0.2.4 panel-created services retire on explicit Quit; existing independent services cannot acquire that new lifetime retroactively. Their first update needs normal sign-out/restart or controlled shutdown of that exact owned service.
 
 An unperformed hardware test is recorded as not run. A UI screenshot, pose heartbeat or accepted eye submission alone does not establish visible headset/game behavior.

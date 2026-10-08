@@ -9,6 +9,7 @@ namespace Switcheroonie.UI;
 internal sealed class ResidentTray : IDisposable
 {
     internal const int CallbackMessage = 0x8530;
+    internal const string QuitLabel = "Quit VRC-SWITCHEROONIE";
     private const uint IconId = 0x5311;
     private readonly nint window;
     private readonly Action showPanel;
@@ -30,7 +31,7 @@ internal sealed class ResidentTray : IDisposable
         AddItem("Release all inputs", release);
         AddItem("Retry background service", retry);
         menu.Items.Add(new Separator());
-        AddItem("Exit panel (service stays running)", exitPanel);
+        AddItem(QuitLabel, exitPanel);
         data = new NotifyIconData
         {
             Size = (uint)Marshal.SizeOf<NotifyIconData>(), Window = window, Id = IconId,

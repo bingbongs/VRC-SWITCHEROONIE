@@ -26,7 +26,7 @@ public partial class App : Application
         }
         if (e.Args.Contains("--self-test-lifetime"))
         {
-            try { BrokerRestartPolicy.SelfTest(); StartupRegistration.SelfTest(); Shutdown(0); }
+            try { BrokerRestartPolicy.SelfTest(); StartupRegistration.SelfTest(); BrokerLaunch.SelfTest((passed, name) => { if (!passed) throw new InvalidOperationException(name); }); Shutdown(0); }
             catch { Shutdown(1); }
             return;
         }

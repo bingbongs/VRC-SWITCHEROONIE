@@ -66,18 +66,24 @@ bool acknowledge = true;
 using var cancellation = new CancellationTokenSource();
 var runtime = Task.Run(async () =>
 {
-    while (!cancellation.IsCancellationRequested)
+    try
     {
-        // Refresh both simulated producers before the broker reads them. A
-        // scheduling pause must not manufacture a stale HMD followed by a lost
-        // activation edge merely because this fixture refreshed after Tick.
-        if (acknowledge) SetDriver(data.ReadUInt64(24), data.ReadUInt32(32) == 1);
-        // A one-shot helper heartbeat plus Task.Delay can expire under CI load.
-        channel.PublishOscWatchdog();
-        engine.Tick();
-        await Task.Delay(5);
+        while (!cancellation.IsCancellationRequested)
+        {
+            // Refresh both simulated producers before the broker reads them.
+            if (Volatile.Read(ref acknowledge)) SetDriver(data.ReadUInt64(24), data.ReadUInt32(32) == 1);
+            channel.PublishOscWatchdog();
+            engine.Tick();
+            gamePlatform.CompleteTick();
+            await Task.Delay(5, cancellation.Token);
+        }
     }
+    catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+    catch (Exception e) { gamePlatform.FailPending(e); throw; }
+    finally { gamePlatform.CancelPending(); }
 });
+try
+{
 var request = new Command { Name = "RequestMode", Mode = "Desktop" };
 var switched = await engine.ExecuteAsync(request);
 Check(switched.Accepted && switched.Status.Mode == "Desktop", "Switch waits for fixture driver acknowledgement (simulated)");
@@ -87,50 +93,65 @@ Check((await engine.ExecuteAsync(new() { Name = "ConfigureOsc", Osc = false })).
 Check((await engine.ExecuteAsync(new() { Name = "ConfigureGameInput", Enabled = true, Sensitivity = 1.4 })).Accepted &&
     JsonSerializer.Deserialize<GameInputSettings>(File.ReadAllText(Path.Combine(configurationDirectory, "direct-input.json")))?.Sensitivity == 1.4,
     "Game input preferences are persisted in the isolated configuration directory");
-gamePlatform.Set(new(Window: 17, Focused: true, ActivateClick: true));
-await Task.Delay(30);
+await gamePlatform.SetAndWaitAsync(new(Window: 17, Focused: true, ActivateClick: true), cancellation.Token);
 Check(engine.Status().InputOwner == "Game" && engine.Status().GameInputActive, "Fixture game foreground click acquires input without UI lease");
-gamePlatform.Set(new(Window: 17, Focused: true, DeltaY: -100)); await Task.Delay(30);
+await gamePlatform.SetAndWaitAsync(new(Window: 17, Focused: true, DeltaY: -100), cancellation.Token);
 Check(data.ReadDouble(56) > 0.3 && Math.Abs(data.ReadDouble(56) - data.ReadDouble(72)) < 1e-9 && data.ReadDouble(64) == 0,
     "Gameplay hand ray follows mouse head pitch for ordinary use/pickup aiming");
 Check(data.ReadUInt32(80) == 0, "Head look publishes the resting hand preset");
-gamePlatform.Set(new(Window: 17, Focused: true, Crouch: true)); await Task.Delay(30);
+await gamePlatform.SetAndWaitAsync(new(Window: 17, Focused: true, Crouch: true), cancellation.Token);
 Check(data.ReadUInt32(84) == 32 && data.ReadDouble(40) == -0.73,
     "Crouch is a native pose modifier without changing the persisted height offset");
-gamePlatform.Set(new(Window: 17, Focused: true, Crouch: true, Prone: true)); await Task.Delay(30);
+await gamePlatform.SetAndWaitAsync(new(Window: 17, Focused: true, Crouch: true, Prone: true), cancellation.Token);
 Check(data.ReadUInt32(84) == 64, "Broker publishes exclusive prone when both posture keys are held");
-gamePlatform.Set(new(Window: 17, Focused: true)); await Task.Delay(30);
+await gamePlatform.SetAndWaitAsync(new(Window: 17, Focused: true), cancellation.Token);
 Check(data.ReadUInt32(84) == 64, "Broker retains toggled prone on key release");
-gamePlatform.Set(new(Window: 17, Focused: true, Prone: true)); await Task.Delay(30);
+await gamePlatform.SetAndWaitAsync(new(Window: 17, Focused: true, Prone: true), cancellation.Token);
 Check(data.ReadUInt32(84) == 0, "Broker clears prone on its next press");
 channel.PublishOscWatchdog();
 Check((await engine.ExecuteAsync(new() { Name = "ConfigureOsc", Osc = true, Destination = "127.0.0.1", Port = 19000 })).Accepted,
     "Private fixture enables OSC to verify separate native posture transport");
-gamePlatform.Set(new(Window: 17, Focused: true, ActivateClick: true)); await Task.Delay(30);
+await gamePlatform.SetAndWaitAsync(new(Window: 17, Focused: true, ActivateClick: true), cancellation.Token);
 channel.PublishOscWatchdog();
-gamePlatform.Set(new(Window: 17, Focused: true, Prone: true));
+await gamePlatform.SetAndWaitAsync(new(Window: 17, Focused: true, Prone: true), cancellation.Token);
 var postureDeadline = Stopwatch.StartNew();
-while (postureDeadline.ElapsedMilliseconds < 3000 &&
-    !(channel.OscWatchdogAlive && channel.Read().Alive && data.ReadUInt32(84) == 64 && channel.ReadOscLease() is { Fresh: true, Enabled: true, Armed: true }))
-    await Task.Delay(5);
-var postureLease = channel.ReadOscLease();
-Check(channel.OscWatchdogAlive && channel.Read().Alive && data.ReadUInt32(84) == 64 &&
+DriverSnapshot postureSource = default;
+OscLease postureLease = default;
+bool postureWatchdog = false;
+uint nativePosture = 0;
+while (postureDeadline.ElapsedMilliseconds < 3000)
+{
+    // Accept and retain the same coherent reads that satisfied the wait. A
+    // second opportunistic read can hit either producer's next odd sequence.
+    var source = channel.Read();
+    var osc = channel.ReadOscLease();
+    bool watchdog = channel.OscWatchdogAlive;
+    uint actions = data.ReadUInt32(84);
+    if (watchdog && source.Alive && actions == 64 && osc is { Fresh: true, Enabled: true, Armed: true })
+    {
+        postureSource = source; postureLease = osc;
+        postureWatchdog = watchdog; nativePosture = actions;
+        break;
+    }
+    await Task.Delay(5, cancellation.Token);
+}
+Check(postureWatchdog && postureSource.Alive && nativePosture == 64 &&
     postureLease is { Fresh: true, Enabled: true, Armed: true, Actions: 0 },
     "OSC movement leaves prone on the native pose path and out of OSC button actions");
 Check((await engine.ExecuteAsync(new() { Name = "ConfigureOsc", Osc = false })).Accepted,
     "Private posture test restores native movement transport");
-gamePlatform.Set(new(Window: 17, Focused: true, ActivateClick: true)); await Task.Delay(30);
-gamePlatform.Set(new(Window: 17, Focused: true)); await Task.Delay(30);
-gamePlatform.Set(new(Window: 17, Focused: true, RightDown: true, DeltaX: 40)); await Task.Delay(30);
+await gamePlatform.SetAndWaitAsync(new(Window: 17, Focused: true, ActivateClick: true), cancellation.Token);
+await gamePlatform.SetAndWaitAsync(new(Window: 17, Focused: true), cancellation.Token);
+await gamePlatform.SetAndWaitAsync(new(Window: 17, Focused: true, RightDown: true, DeltaX: 40), cancellation.Token);
 Check(data.ReadUInt32(80) == 2 && data.ReadUInt32(84) == 0 && data.ReadDouble(64) > .1,
     "Right-held pointer publishes the explicit aim preset without a grab press");
-gamePlatform.Set(new(Window: 17, Focused: true)); await Task.Delay(30);
+await gamePlatform.SetAndWaitAsync(new(Window: 17, Focused: true), cancellation.Token);
 Check(data.ReadUInt32(80) == 0, "Pointer release publishes resting hands again");
 Check((await engine.ExecuteAsync(new() { Name = "DisarmViewer", Window = 99 })).Accepted && engine.Status().GameInputActive,
     "Late panel disarm cannot cancel game ownership");
 Check(!(await engine.ExecuteAsync(new() { Name = "UpdateInput", Window = 99, Armed = true, Actions = 1 })).Accepted && engine.Status().GameInputActive,
     "Rejected stale pad packet cannot cancel game ownership");
-gamePlatform.Set(new()); await Task.Delay(30);
+await gamePlatform.SetAndWaitAsync(new(), cancellation.Token);
 Check(!engine.Status().Armed && !gamePlatform.Capture && data.ReadUInt32(36) == 0 && data.ReadUInt32(84) == 0,
     "Fixture game focus loss releases movement, posture, native buttons and cursor ownership");
 Check((await engine.ExecuteAsync(new() { Name = "ToggleMenu" })).Accepted, "Broker accepts menu pulse without a pad lease");
@@ -146,15 +167,14 @@ Check((await engine.ExecuteAsync(new() { Name = "RequestMode", Mode = "Physical"
 Check((await engine.ExecuteAsync(new() { Name = "ConfigureSpin", Enabled = true })).Accepted &&
     JsonSerializer.Deserialize<SpinPreferences>(File.ReadAllText(Path.Combine(configurationDirectory, "spin.json")))?.Enabled == true,
     "Spin option persists independently without activating motion");
-SetDriver(epoch: data.ReadUInt64(24), desktop: false);
-gamePlatform.Set(new(Window: 17, Focused: true, SpinToggle: true)); await Task.Delay(30);
+await gamePlatform.SetAndWaitAsync(new(Window: 17, Focused: true, SpinToggle: true), cancellation.Token);
 Check(engine.Status().SpinActive && data.ReadUInt32(136) == 1 && data.ReadUInt32(36) == 0 && data.ReadUInt32(140) == 0 &&
     data.ReadInt64(144) > 0 && data.ReadDouble(152) == 1 && Math.Abs(data.ReadDouble(192) - .95) < 1e-12,
     "Physical spin publishes a separate coherent quaternion lease without arming desktop buttons");
-gamePlatform.Set(new(Window: 17, Focused: true, SpinLeft: true)); await Task.Delay(40);
+await gamePlatform.SetAndWaitAsync(new(Window: 17, Focused: true, SpinLeft: true), cancellation.Token); await Task.Delay(40);
 Check(engine.Status().SpinRollSpeed > 0 && data.ReadDouble(176) != 0,
     "Physical spin controller reaches the shared native quaternion fields");
-gamePlatform.Set(new(Window: 17, Focused: false)); await Task.Delay(30);
+await gamePlatform.SetAndWaitAsync(new(Window: 17, Focused: false), cancellation.Token);
 Check(!engine.Status().SpinActive && data.ReadUInt32(136) == 0, "Focus loss neutralizes the separate spin lease");
 using (var persistedChannel = new SharedChannel("Local\\VRC-SWITCHEROONIE-SpinPrefs-Test-" + Guid.NewGuid().ToString("N")))
 using (var persistedEngine = new HarnessEngine(persistedChannel, configurationDirectory: configurationDirectory))
@@ -165,7 +185,8 @@ Check((await engine.ExecuteAsync(new() { Name = "ConfigureSpin", Enabled = false
 acknowledge = false;
 var failed = await engine.ExecuteAsync(new() { Name = "RequestMode", Mode = "Desktop" });
 Check(!failed.Accepted && !failed.Status.Armed, "Unacknowledged mode never reports success");
-cancellation.Cancel(); await runtime;
+}
+finally { cancellation.Cancel(); await runtime; }
 
 channel.Publish(4, true, true, 0, 0.1, -0.2, 0, 0, 2, 1, 0, 0, true, 19000, 1, -1, 8);
 var lease = channel.ReadOscLease();
@@ -200,6 +221,8 @@ StatePathsTests.Run(Check);
 CursorTests.Run(Check);
 AutomaticRoutingTests.Run(Check);
 HelperRestartPolicyTests.Run(Check);
+BrokerLifetimeTests.Run(Check);
+HarnessDisposalTests.Run(Check);
 await AutomaticHarnessTests.RunAsync(Check);
 await ConcurrentRoutingTests.RunAsync(Check);
 await SpinHarnessTests.RunAsync(Check);
@@ -210,19 +233,42 @@ sealed class FixtureGameInput : IGameInputPlatform
 {
     readonly object sync = new();
     GameInputSample sample;
+    long generation, readGeneration;
+    TaskCompletionSource? pending;
     public bool Capture { get; private set; }
-    public void Set(GameInputSample value) { lock (sync) sample = value; }
+    public async Task SetAndWaitAsync(GameInputSample value, CancellationToken cancellation)
+    {
+        Task completion;
+        lock (sync)
+        {
+            if (pending is not null && !pending.Task.IsCompleted)
+                throw new InvalidOperationException("An unconsumed fixture sample cannot be replaced.");
+            ++generation; sample = value;
+            pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            completion = pending.Task;
+        }
+        // Consumption alone is insufficient: the enclosing Tick must publish
+        // the resulting actions before the test asserts or sends another edge.
+        await completion.WaitAsync(TimeSpan.FromSeconds(3), cancellation);
+    }
+    public void CompleteTick()
+    {
+        lock (sync) if (readGeneration == generation) pending?.TrySetResult();
+    }
+    public void FailPending(Exception error) { lock (sync) pending?.TrySetException(error); }
+    public void CancelPending() { lock (sync) pending?.TrySetCanceled(); }
     public GameInputSample Read(bool eligible)
     {
         lock (sync)
         {
             var value = sample;
+            readGeneration = generation;
             sample = sample with { ActivateClick = false, ToggleMenu = false, EscapeMenu = false, RaiseMenu = false, SpinToggle = false,
                 CrouchPress = false, PronePress = false, ChatToggle = false, ChatCancel = false, Emergency = false, DeltaX = 0, DeltaY = 0 };
             return value;
         }
     }
     public void SetCapture(bool capture) => Capture = capture;
-    public void Dispose() { }
+    public void Dispose() { CancelPending(); }
 }
 

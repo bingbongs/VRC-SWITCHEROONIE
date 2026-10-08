@@ -383,12 +383,7 @@ public partial class SettingsWindow : Window
         try
         {
             _startedBrokerProcess?.Dispose();
-            _startedBrokerProcess = Process.Start(new ProcessStartInfo(brokerPath)
-            {
-                WorkingDirectory = AppContext.BaseDirectory,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
+            _startedBrokerProcess = Process.Start(BrokerLaunch.Create());
             ServiceStateText.Text = "Starting the background service…";
             MessageText.Text = "Starting the local service. Your current session and selected mode stay unchanged.";
         }
@@ -936,7 +931,7 @@ public partial class SettingsWindow : Window
                 timestampUtc = DateTime.UtcNow,
                 brokerResponding = _connected,
                 status = _connected ? _status : null,
-                uiVersion = "0.2.3",
+                uiVersion = "0.2.4",
                 hardwareTests = "Not performed by this panel; consult the evidence reports.",
                 shortcuts = new { toggleRegistered = _toggleHotkey, releaseRegistered = _releaseHotkey }
             };
