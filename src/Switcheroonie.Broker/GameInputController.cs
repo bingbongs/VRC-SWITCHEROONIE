@@ -36,10 +36,14 @@ public sealed class GameInputController
     public bool MenuNavigation { get; private set; }
     public bool Typing => typing;
     public bool Active => active && !typing;
-    public void Release(bool requireFreshClick = true)
+    public void Release(bool requireFreshClick = true, bool resetMenuNavigation = false)
     {
         active = false; activationClick = false; heldGate = 0;
         posture = 0; lastCrouch = lastProne = false;
+        // Full emergency release can recover a stale local menu state after the
+        // game closes its own menu. Ordinary focus/ownership loss retains it.
+        // This changes only local state; it never emits a native toggle edge.
+        if (resetMenuNavigation) MenuNavigation = false;
         // An emergency while clicking cannot immediately acquire again.
         waitForRelease = requireFreshClick && lastLeft;
     }
@@ -53,7 +57,7 @@ public sealed class GameInputController
     public GameInputFrame Step(GameInputSample s, bool eligible, double sensitivity, bool observeChat = false)
     {
         lastLeft = s.LeftDown;
-        if (s.Emergency) { Release(); return new(); }
+        if (s.Emergency) { Release(resetMenuNavigation: true); return new(); }
         if ((!eligible && !observeChat) || !s.Focused || s.Window == 0)
         {
             Release();

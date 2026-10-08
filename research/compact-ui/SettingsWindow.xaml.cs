@@ -931,7 +931,7 @@ public partial class SettingsWindow : Window
                 timestampUtc = DateTime.UtcNow,
                 brokerResponding = _connected,
                 status = _connected ? _status : null,
-                uiVersion = "0.2.4",
+                uiVersion = "0.2.5",
                 hardwareTests = "Not performed by this panel; consult the evidence reports.",
                 shortcuts = new { toggleRegistered = _toggleHotkey, releaseRegistered = _releaseHotkey }
             };

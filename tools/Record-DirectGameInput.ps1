@@ -143,6 +143,10 @@ try {
                 cursorInfoAvailable = Get-Boolean $taskStatus.GameCursorInfoAvailable
                 cursorHideAttempts = Get-Unsigned $taskStatus.GameCursorHideAttempts
                 cursorHideObserved = Get-Unsigned $taskStatus.GameCursorHideObserved
+                rawMouseRelativePackets = Get-Unsigned $taskStatus.RawMouseRelativePackets
+                rawMouseAbsolutePackets = Get-Unsigned $taskStatus.RawMouseAbsolutePackets
+                rawMouseRebaselines = Get-Unsigned $taskStatus.RawMouseRebaselines
+                rawMouseWarpSuppressed = Get-Unsigned $taskStatus.RawMouseWarpSuppressed
                 cursorWatchdogAlive = Get-Boolean $taskStatus.GameCursorWatchdogAlive; menuNavigation = Get-Boolean $taskStatus.MenuNavigation
                 automaticEnabled = Get-Boolean $taskStatus.AutomaticEnabled; manualMode = Get-AllowedLabel $taskStatus.ManualMode @('Desktop', 'Physical')
                 headsetWornKnown = Get-Boolean $taskStatus.HeadsetWornKnown; headsetWorn = Get-Boolean $taskStatus.HeadsetWorn

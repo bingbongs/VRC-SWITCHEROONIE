@@ -66,6 +66,10 @@ public sealed record HarnessStatus
     public ulong GameCursorHideAttempts { get; init; }
     public ulong GameCursorHideObserved { get; init; }
     public bool GameCursorWatchdogAlive { get; init; }
+    public ulong RawMouseRelativePackets { get; init; }
+    public ulong RawMouseAbsolutePackets { get; init; }
+    public ulong RawMouseRebaselines { get; init; }
+    public ulong RawMouseWarpSuppressed { get; init; }
     public bool MenuNavigation { get; init; }
     public bool SpinEnabled { get; init; }
     public bool SpinActive { get; init; }

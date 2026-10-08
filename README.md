@@ -73,6 +73,8 @@ Use **VRC-SWITCHEROONIE-Portable.zip** for the simple download. The versioned wi
 
 Version 0.2.4 makes the background service exit with the panel's explicit Quit command. An already-running service from 0.2.3 or older needs a one-time normal Windows restart before this new exit behavior can apply.
 
+Version 0.2.5 handles both relative and absolute Windows mouse input. **Release inputs** (Ctrl+Alt+F12) also clears a stuck local menu state and lowers the synthetic hands; click VRChat again to resume. These fixes need a live check for the reported wrist problems.
+
 ## Build
 
 Windows x64, .NET SDK 10, CMake 3.25+, and Visual Studio Build Tools 2022 with C++ and the Windows SDK are required.

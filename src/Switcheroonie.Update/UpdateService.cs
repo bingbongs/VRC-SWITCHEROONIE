@@ -27,7 +27,7 @@ public sealed class UpdateService : IDisposable
         store = new(storeRoot ?? Path.Combine(StatePaths.Current.DataDirectory, "updates"));
         http = new(handler ?? new HttpClientHandler { AllowAutoRedirect = false });
         http.Timeout = TimeSpan.FromMinutes(5);
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("VRC-SWITCHEROONIE-Updater/0.2.4");
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("VRC-SWITCHEROONIE-Updater/0.2.5");
         http.DefaultRequestHeaders.Accept.Add(new("application/vnd.github+json"));
         http.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
         this.safety = safety ?? new WindowsUpdateSafety();

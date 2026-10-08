@@ -13,6 +13,9 @@ public sealed class WindowsGameInput : IGameInputPlatform
     readonly WindowProcedure windowProcedure;
     readonly HookProcedure hookProcedure;
     readonly KeyboardPressTracker keyPresses = new();
+    readonly RawMouseMotion rawMotion = new(Stopwatch.Frequency);
+    RawMouseGeometry mouseGeometry;
+    int mouseCaptureMode;
     readonly int session = Process.GetCurrentProcess().SessionId;
     readonly GameWindowAuthorityCache windowAuthority;
     volatile bool disposed, initialized, eligibleScope, active, typing, spinEnabled, lookRequested;
@@ -45,6 +48,10 @@ public sealed class WindowsGameInput : IGameInputPlatform
     public bool GameCursorInfoAvailable { get { lock (gate) return lookSurface?.CursorInfoAvailable == true; } }
     public ulong GameCursorHideAttempts { get { lock (gate) return lookSurface?.HideAttempts ?? 0; } }
     public ulong GameCursorHideObserved { get { lock (gate) return lookSurface?.HideObserved ?? 0; } }
+    public ulong RawMouseRelativePackets { get { lock (gate) return rawMotion.RelativePackets; } }
+    public ulong RawMouseAbsolutePackets { get { lock (gate) return rawMotion.AbsolutePackets; } }
+    public ulong RawMouseRebaselines { get { lock (gate) return rawMotion.Rebaselines; } }
+    public ulong RawMouseWarpSuppressed { get { lock (gate) return rawMotion.WarpSuppressed; } }
     public bool CursorHidden
     {
         get
@@ -66,8 +73,8 @@ public sealed class WindowsGameInput : IGameInputPlatform
         thread = new Thread(MessageLoop) { IsBackground = true, Name = "Switcheroonie raw input" };
         thread.Start(); if (!ready.Wait(TimeSpan.FromSeconds(1))) Volatile.Write(ref initializationError, "Windows input thread startup timed out.");
     }
-    public void SetActive(bool value) => active = value;
-    public void SetTyping(bool value) => typing = value;
+    public void SetActive(bool value) { lock (gate) { if (active != value) ResetMouseMotion(); active = value; } }
+    public void SetTyping(bool value) { lock (gate) { if (typing != value) ResetMouseMotion(); typing = value; } }
     public void SetSpinEnabled(bool value) { lock (gate) { spinEnabled = value; Array.Clear(numpad); Interlocked.Exchange(ref spinToggle, 0); } }
     public void ConfigureKeys(IReadOnlyDictionary<string, int> keys)
     {
@@ -91,6 +98,7 @@ public sealed class WindowsGameInput : IGameInputPlatform
             bool changed = Volatile.Read(ref scopeWindow) != window.ToInt64() || Volatile.Read(ref scopePid) != (int)pid;
             if (changed) { InvalidateScope(); ReleaseCapture(); }
             clientRect = rectangle;
+            UpdateMouseGeometry(rectangle);
             Volatile.Write(ref scopePid, (int)pid); Volatile.Write(ref scopeWindow, window.ToInt64());
             Volatile.Write(ref scopeStamp, Stopwatch.GetTimestamp());
             if (cursorMap is not null)
@@ -137,6 +145,9 @@ public sealed class WindowsGameInput : IGameInputPlatform
             EnsureHelper();
             if (cursorMap?.HelperAlive != true) { ReleaseCapture(); PublishLease(false); return; }
             clientRect = rectangle;
+            UpdateMouseGeometry(rectangle);
+            int motionMode = pointer ? 2 : 1;
+            if (mouseCaptureMode != motionMode) { ResetMouseMotion(); mouseCaptureMode = motionMode; }
             cursorCapture.Update(true, pointer, rectangle, CursorNative.DesktopRect());
             lookRequested = cursorCapture.Owned && !pointer; lookSurface?.Refresh();
         }
@@ -174,23 +185,54 @@ public sealed class WindowsGameInput : IGameInputPlatform
         cursorMap?.Publish(armed, armed ? cursorOwnerWindow : scopedWindow, armed ? cursorOwnerPid : scopedPid,
             owned, previous, generation: generation);
     }
-    void ReleaseCapture() { lookRequested = false; lookSurface?.Refresh(); cursorCapture.Release(); }
+    void ReleaseCapture()
+    {
+        if (mouseCaptureMode != 0 || lookRequested || cursorCapture.Owned) ResetMouseMotion();
+        mouseCaptureMode = 0; lookRequested = false; lookSurface?.Refresh(); cursorCapture.Release();
+    }
     sealed class CaptureOperations(WindowsGameInput owner) : GameCursorCapture.IOperations
     {
         public bool AuthorityValid => !owner.disposed && owner.eligibleScope && owner.active && !owner.typing && owner.ScopeFresh() && owner.cursorMap?.HelperAlive == true;
         public bool Read(out CursorNative.Rect rectangle) => CursorNative.GetClipCursor(out rectangle);
-        public bool Clip(CursorNative.Rect rectangle) => CursorNative.ClipCursor(ref rectangle);
-        public bool Center(int x, int y) => CursorNative.SetCursorPos(x, y);
+        public bool Clip(CursorNative.Rect rectangle)
+        {
+            bool changed = CursorNative.ClipCursor(ref rectangle);
+            if (changed)
+            {
+                owner.ResetMouseMotion();
+                if (rectangle.Right - rectangle.Left == 1 && rectangle.Bottom - rectangle.Top == 1)
+                    owner.rawMotion.OwnWarp(rectangle.Left, rectangle.Top, Stopwatch.GetTimestamp());
+            }
+            return changed;
+        }
+        public bool Center(int x, int y)
+        {
+            bool changed = CursorNative.SetCursorPos(x, y);
+            if (changed) { owner.ResetMouseMotion(); owner.rawMotion.OwnWarp(x, y, Stopwatch.GetTimestamp()); }
+            return changed;
+        }
+    }
+    void ResetMouseMotion()
+    {
+        Interlocked.Exchange(ref deltaX, 0); Interlocked.Exchange(ref deltaY, 0); rawMotion.CursorChanged();
+    }
+    void UpdateMouseGeometry(CursorNative.Rect rectangle)
+    {
+        var next = new RawMouseGeometry(new(0, 0, CursorNative.GetSystemMetrics(0), CursorNative.GetSystemMetrics(1)), CursorNative.DesktopRect(), rectangle);
+        if (rawMotion.SetGeometry(next)) { Interlocked.Exchange(ref deltaX, 0); Interlocked.Exchange(ref deltaY, 0); }
+        mouseGeometry = next;
     }
     void InvalidateScope()
     {
         windowAuthority.Reset();
+        mouseGeometry = default; mouseCaptureMode = 0;
         Volatile.Write(ref scopeStamp, 0); Volatile.Write(ref scopeWindow, 0); Volatile.Write(ref scopePid, 0);
         Interlocked.Exchange(ref deltaX, 0); Interlocked.Exchange(ref deltaY, 0); Interlocked.Exchange(ref activationClick, 0);
         Volatile.Write(ref activationWindow, 0); Volatile.Write(ref activationPid, 0); Volatile.Write(ref activationStamp, 0);
         Interlocked.Exchange(ref toggleMenu, 0); Interlocked.Exchange(ref escapeMenu, 0); Interlocked.Exchange(ref chatToggle, 0); Interlocked.Exchange(ref chatCancel, 0); Interlocked.Exchange(ref emergency, 0);
         Interlocked.Exchange(ref raiseMenu, 0); Interlocked.Exchange(ref spinToggle, 0); Array.Clear(numpad);
         Interlocked.Exchange(ref crouchPress, 0); Interlocked.Exchange(ref pronePress, 0); crouchHeld = proneHeld = false;
+        rawMotion.Reset();
     }
     bool ScopeFresh()
     {
@@ -224,32 +266,41 @@ public sealed class WindowsGameInput : IGameInputPlatform
 
     unsafe void RawMouse(IntPtr raw)
     {
+        long packetGeneration = rawMotion.Generation;
         if (!eligibleScope || disposed) return;
         uint size = 0, headerSize = (uint)Marshal.SizeOf<RawHeader>();
         if (GetRawInputData(raw, 0x10000003, IntPtr.Zero, ref size, headerSize) != 0 || size < headerSize + 24 || size > 512) return;
         byte* buffer = stackalloc byte[512];
-        if (GetRawInputData(raw, 0x10000003, (IntPtr)buffer, ref size, headerSize) != size || *(uint*)buffer != 0) return;
-        byte* mouse = buffer + headerSize;
-        ushort flags = *(ushort*)mouse, buttons = *(ushort*)(mouse + 4);
+        uint copied = GetRawInputData(raw, 0x10000003, (IntPtr)buffer, ref size, headerSize);
+        if (copied != size || copied < headerSize + 24 || copied > 512 ||
+            !RawMousePacket.TryRead(new ReadOnlySpan<byte>(buffer, (int)size), IntPtr.Size, out var packet)) return;
         lock (gate)
         {
-            if (!eligibleScope || disposed) return;
+            // Parsing can be preempted by a scope/capture/typing reset. Such a
+            // packet must not activate or move the newly established scope.
+            if (!eligibleScope || disposed || !rawMotion.IsCurrent(packetGeneration)) return;
             if (!ScopeFresh())
             {
                 // A real left-down may focus the game before the next broker
                 // poll. Scope validation and publication share Read's gate so
                 // an old callback cannot tag deltas/clicks onto a newer scope.
-                if ((buttons & 1) == 0 || !ValidateGameWindow(out var game, out uint pid, out var rectangle) || CursorNative.GetForegroundWindow() != game) return;
+                if ((packet.Buttons & 1) == 0 || !ValidateGameWindow(out var game, out uint pid, out var rectangle) || CursorNative.GetForegroundWindow() != game)
+                { ResetMouseMotion(); return; }
                 InvalidateScope(); ReleaseCapture(); clientRect = rectangle;
+                UpdateMouseGeometry(rectangle);
                 Volatile.Write(ref scopePid, (int)pid); Volatile.Write(ref scopeWindow, game.ToInt64());
                 Volatile.Write(ref scopeStamp, Stopwatch.GetTimestamp());
             }
-            if ((buttons & 1) != 0)
+            if ((packet.Buttons & 1) != 0)
             {
                 Volatile.Write(ref activationWindow, Volatile.Read(ref scopeWindow)); Volatile.Write(ref activationPid, Volatile.Read(ref scopePid));
                 Volatile.Write(ref activationStamp, Stopwatch.GetTimestamp()); Interlocked.Exchange(ref activationClick, 1);
             }
-            if ((flags & 1) == 0) { AddDelta(ref deltaX, *(int*)(mouse + 12)); AddDelta(ref deltaY, *(int*)(mouse + 16)); }
+            // Eligibility/focus are authenticated even before a fresh click.
+            // Those packets can establish baselines/counts; acquisition and all
+            // active/typing transitions consume/reset their motion separately.
+            var movement = rawMotion.Apply(packet, mouseGeometry, Stopwatch.GetTimestamp(), !typing);
+            AddDelta(ref deltaX, movement.X); AddDelta(ref deltaY, movement.Y);
         }
     }
     IntPtr KeyboardProc(int code, IntPtr wParam, IntPtr lParam)
@@ -334,7 +385,7 @@ public sealed class WindowsGameInput : IGameInputPlatform
             if (RegisterClassEx(ref wc) == 0) throw new Win32Exception();
             messageWindow = CreateWindowEx(0, className, "", 0, 0, 0, 0, 0, new IntPtr(-3), IntPtr.Zero, instance, IntPtr.Zero);
             if (messageWindow == IntPtr.Zero) throw new Win32Exception();
-            var device = new RawDevice { UsagePage = 1, Usage = 2, Flags = 0x100, Target = messageWindow };
+            var device = new RawDevice { UsagePage = 1, Usage = 2, Flags = 0x2100, Target = messageWindow };
             if (!RegisterRawInputDevices([device], 1, (uint)Marshal.SizeOf<RawDevice>())) throw new Win32Exception();
             hook = SetWindowsHookEx(13, hookProcedure, instance, 0);
             if (hook == IntPtr.Zero) throw new Win32Exception();
@@ -367,6 +418,11 @@ public sealed class WindowsGameInput : IGameInputPlatform
     IntPtr WindowProc(IntPtr window, uint message, IntPtr wParam, IntPtr lParam)
     {
         if (message == 0xFF) RawMouse(lParam);
+        else if (message == 0xFE && wParam.ToInt64() is 1 or 2)
+        {
+            lock (gate) { rawMotion.ForgetDevice(lParam.ToInt64()); Interlocked.Exchange(ref deltaX, 0); Interlocked.Exchange(ref deltaY, 0); }
+            return IntPtr.Zero;
+        }
         else if (message == 0x10) { PostQuitMessage(0); return IntPtr.Zero; }
         return DefWindowProc(window, message, wParam, lParam);
     }

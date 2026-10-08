@@ -112,11 +112,12 @@ public sealed class HarnessEngine : IDisposable
         armed = false; actions = 0; ownerWindow = 0;
         if (inputOwner == "Pad") { publishedArmed = false; publishedWindow = 0; inputOwner = "Released"; }
     }
-    void ReleaseLocked()
+    void ReleaseLocked(bool resetMenuNavigation = false)
     {
         spin.Reset();
         stoppedSpinReason = 0;
-        ReleasePadLocked(); gameInput.Release(); gameActive = publishedArmed = false;
+        ReleasePadLocked(); gameInput.Release(resetMenuNavigation: resetMenuNavigation); gameActive = publishedArmed = false;
+        if (resetMenuNavigation) { preset = 0; handYaw = handPitch = 0; }
         pendingMenuPulses.Clear(); menuPulseUntil = nextMenuPulseAt = 0;
         inputOwner = "Released"; publishedWindow = 0;
         gamePlatform.SetActive(false); gamePlatform.SetTyping(gameInput.Typing); gamePlatform.SetCapture(false);
@@ -213,7 +214,7 @@ public sealed class HarnessEngine : IDisposable
                 if (gamePlatform is WindowsGameInput windows && windows.InitializationError is { } failure)
                     throw new InvalidOperationException(failure);
                 var sample = gamePlatform.Read((gameEnabled && routeReady || spinEligible) && !focused);
-                if (sample.Emergency) { ReleaseLocked(); detail = "Emergency release; click VRChat again to resume."; }
+                if (sample.Emergency) { ReleaseLocked(resetMenuNavigation: true); detail = "Emergency release; click VRChat again to resume."; }
                 game = gameInput.Step(sample, gameEnabled && routeReady && !focused, gameSensitivity, observeChat: spinEligible);
                 // Native refusal ends this motion attempt. Never accumulate a
                 // hidden quaternion which could jump when tracker data returns.
@@ -329,6 +330,10 @@ public sealed class HarnessEngine : IDisposable
                 GameCursorHideAttempts = gamePlatform is WindowsGameInput attempts ? attempts.GameCursorHideAttempts : 0,
                 GameCursorHideObserved = gamePlatform is WindowsGameInput observed ? observed.GameCursorHideObserved : 0,
                 GameCursorWatchdogAlive = gamePlatform is WindowsGameInput watchdog && watchdog.CursorWatchdogAlive,
+                RawMouseRelativePackets = gamePlatform is WindowsGameInput relative ? relative.RawMouseRelativePackets : 0,
+                RawMouseAbsolutePackets = gamePlatform is WindowsGameInput absolute ? absolute.RawMouseAbsolutePackets : 0,
+                RawMouseRebaselines = gamePlatform is WindowsGameInput baselines ? baselines.RawMouseRebaselines : 0,
+                RawMouseWarpSuppressed = gamePlatform is WindowsGameInput warps ? warps.RawMouseWarpSuppressed : 0,
                 MenuNavigation = gameInput.MenuNavigation, GameInputDetail = gameDetail,
                 SpinEnabled = spinEnabled, SpinActive = spin.Active,
                 SpinDetail = spinDetail,
@@ -381,7 +386,7 @@ public sealed class HarnessEngine : IDisposable
                         SaveRoutingSettings();
                         adaptationDetail = automaticEnabled ? "Auto resumed · waiting for stable headset wear information." : "Automatic switching is paused.";
                         break;
-                    case "ReleaseInputs": ReleaseLocked(); break;
+                    case "ReleaseInputs": ReleaseLocked(resetMenuNavigation: true); break;
                     case "ConfigureSpin":
                         SaveSpinSettings(command.Enabled); spinEnabled = command.Enabled;
                         spin.Reset(); gamePlatform.SetSpinEnabled(spinEnabled);

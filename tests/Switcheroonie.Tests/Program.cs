@@ -213,6 +213,8 @@ var neutral1 = (await receiver.ReceiveAsync().WaitAsync(TimeSpan.FromSeconds(1))
 var neutral2 = (await receiver.ReceiveAsync().WaitAsync(TimeSpan.FromSeconds(1))).Buffer;
 Check(BinaryPrimitives.ReadInt32BigEndian(neutral1.AsSpan(neutral1.Length - 4)) == 0 && BinaryPrimitives.ReadInt32BigEndian(neutral2.AsSpan(neutral2.Length - 4)) == 0, "OSC release sends actual neutral packets");
 GameInputTests.Run(Check);
+MenuRecoveryTests.Run(Check);
+RawMousePacketTests.Run(Check);
 SpinTests.Run(Check);
 GameCursorCaptureTests.Run(Check);
 GameWindowAuthorityTests.Run(Check);
@@ -223,6 +225,7 @@ AutomaticRoutingTests.Run(Check);
 HelperRestartPolicyTests.Run(Check);
 BrokerLifetimeTests.Run(Check);
 HarnessDisposalTests.Run(Check);
+await HarnessMenuRecoveryTests.RunAsync(Check);
 await AutomaticHarnessTests.RunAsync(Check);
 await ConcurrentRoutingTests.RunAsync(Check);
 await SpinHarnessTests.RunAsync(Check);
