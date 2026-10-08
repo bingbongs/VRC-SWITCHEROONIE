@@ -22,9 +22,35 @@ $actionTail=(@($statements[$start..($statements.Count-1)] | ForEach-Object {$_.E
 $sourceAssignment='$source = Join-Path ([IO.Directory]::GetParent($PSScriptRoot).FullName) ''driver'''
 if(!$actionTail.Contains($sourceAssignment)){throw 'Missing installer package source assignment.'}
 $actionTail=$actionTail.Replace($sourceAssignment,'$source = $packageDriverRoot')
-$sandboxBase=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'sandbox'))
+$sandboxBase=[IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) 'VRC-SWITCHEROONIE-DriverJournal-ProcessGuard'))
+function Assert-FixtureOrdinaryPath([string]$Path) {
+    for($cursor=[IO.Path]::GetFullPath($Path);$null -ne $cursor;$cursor=[IO.Path]::GetDirectoryName($cursor)){
+        if(!(Test-Path -LiteralPath $cursor)){continue}
+        $item=Get-Item -LiteralPath $cursor -Force
+        if(!$item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Fixture sandbox requires ordinary directory ancestors.'}
+    }
+}
+# Registration snapshots are deliberately rewritten often. Keep this disposable
+# fixture outside cloud synchronization without retrying any operation or changing
+# a product assertion. Unknown or redirected temporary roots fail closed.
+Assert-FixtureOrdinaryPath $sandboxBase
+[IO.Directory]::CreateDirectory($sandboxBase)|Out-Null
+Assert-FixtureOrdinaryPath $sandboxBase
 $sandbox=Join-Path $sandboxBase ([Guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
+if(-not ('Switcheroonie.DriverJournalFixtureDirectory' -as [type])){
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace Switcheroonie { public static class DriverJournalFixtureDirectory {
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CreateDirectoryW(string path, IntPtr security);
+} }
+'@
+}
+Assert-FixtureOrdinaryPath $sandboxBase
+if(![Switcheroonie.DriverJournalFixtureDirectory]::CreateDirectoryW($sandbox,[IntPtr]::Zero)){throw 'Exclusive fixture sandbox creation failed.'}
+Assert-FixtureOrdinaryPath $sandbox
 $profileRoot=$sandbox;$localAppDataRoot=$sandbox
 $dataRoot=Join-Path $sandbox 'config';$driverConfig=Join-Path $dataRoot 'driver.json';$journalPath=Join-Path $dataRoot 'installation-journal.json'
 $legacyInstallRoot=Join-Path $sandbox 'legacy';$relocatedInstallRoot=Join-Path $sandbox 'current';$allowedOwnedRoots=@($legacyInstallRoot,$relocatedInstallRoot)
@@ -86,6 +112,7 @@ function Reset-Fixture {
     foreach($path in @($dataRoot,$legacyInstallRoot,$relocatedInstallRoot,$packageDriverRoot)){
         $resolved=[IO.Path]::GetFullPath($path)
         if(!$resolved.StartsWith($sandbox+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Unsafe fixture reset path.'}
+        Assert-FixtureOrdinaryPath $resolved
         if(Test-Path -LiteralPath $resolved){Remove-Item -LiteralPath $resolved -Recurse -Force}
     }
     New-Item -ItemType Directory -Path $dataRoot,$legacyInstallRoot,$packageDriverRoot -Force | Out-Null
@@ -298,6 +325,13 @@ try {
 } finally {
     $resolved=[IO.Path]::GetFullPath($sandbox)
     if(!$resolved.StartsWith($sandboxBase+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Unsafe sandbox cleanup target.'}
+    Assert-FixtureOrdinaryPath $resolved
+    if(Test-Path -LiteralPath $resolved){
+        foreach($item in @(Get-ChildItem -LiteralPath $resolved -Recurse -Force)){
+            if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Fixture cleanup refused a redirected child.'}
+        }
+        Assert-FixtureOrdinaryPath $resolved
+    }
     if(Test-Path -LiteralPath $resolved){Remove-Item -LiteralPath $resolved -Recurse -Force}
     [pscustomobject]@{schemaVersion=1;dateUtc=[DateTime]::UtcNow.ToString('o');powershellVersion=$PSVersionTable.PSVersion.ToString();passed=($exitCode -eq 0);results=$results.ToArray();scope='Extracted installer functions and action dispatch, entirely injected process inventory and registration command, test-owned sandbox. No actual host process inventory, known folders, config, driver registration or runtime actions.';limitation='Fresh checks before each mutation cannot atomically prevent an unrelated runtime starting after the check.'}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $RepositoryRoot 'reports/installer-process-guard-regression.json') -Encoding UTF8
     Write-Output ('Installer process guard regression: {0} passed, {1} failed.' -f @($results|Where-Object passed).Count,@($results|Where-Object {!$_.passed}).Count)
