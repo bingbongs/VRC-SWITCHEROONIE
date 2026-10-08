@@ -1,0 +1,184 @@
+<Window x:Class="Switcheroonie.UI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="VRC-SWITCHEROONIE" Width="1030" Height="860" MinWidth="700" MinHeight="560"
+        Background="#0E171C" Foreground="{StaticResource Text}" FontFamily="Segoe UI"
+        WindowStartupLocation="CenterScreen" Loaded="Window_Loaded" Deactivated="Window_Deactivated"
+        PreviewKeyDown="Window_PreviewKeyDown" PreviewMouseDown="Window_PreviewMouseDown" PreviewGotKeyboardFocus="Window_PreviewGotKeyboardFocus"
+        Closing="Window_Closing">
+  <Grid Margin="28">
+    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+    <Grid Margin="0,0,0,22">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+      <StackPanel>
+        <TextBlock Text="VRC-SWITCHEROONIE" FontSize="28" FontWeight="Bold" />
+        <TextBlock Text="One VR session. Two ways to control it." Foreground="{StaticResource Muted}" FontSize="15" Margin="0,5,0,0" />
+      </StackPanel>
+      <Button Grid.Column="1" x:Name="ReleaseButton" Content="Release all inputs · Esc" Foreground="#FFD2BD" BorderBrush="#8C5744" Click="Release_Click" Margin="20,0,0,0" AutomationProperties.Name="Emergency release all inputs" />
+    </Grid>
+    <ScrollViewer x:Name="MainScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,8,0">
+      <StackPanel>
+        <Border Style="{StaticResource Card}" Padding="18" BorderBrush="#3C5C55">
+          <StackPanel>
+            <TextBlock x:Name="ServiceStateText" Text="Connecting background service…" FontSize="18" FontWeight="SemiBold" />
+            <TextBlock x:Name="ServiceDetailText" Text="Switcheroonie can stay ready before SteamVR or VRChat is running." Foreground="{StaticResource Muted}" Margin="0,6,0,0" />
+            <WrapPanel Margin="0,12,0,0">
+              <CheckBox x:Name="AutomaticCheck" Content="Follow reported headset use automatically" IsEnabled="False" VerticalAlignment="Center" Margin="0,0,14,8" />
+              <Button x:Name="ApplyAutomaticButton" Content="Apply / resume automatic" Click="AutomaticApply_Click" IsEnabled="False" Padding="12,7" Margin="0,0,10,8" />
+              <Button Content="Hide to tray" Click="HidePanel_Click" Padding="12,7" Margin="0,0,10,8" />
+              <Button Content="Retry service" Click="RetryService_Click" Padding="12,7" Margin="0,0,0,8" />
+            </WrapPanel>
+            <TextBlock x:Name="ManualModeText" Text="Reading your stored selection…" Foreground="{StaticResource Muted}" FontSize="12" />
+            <WrapPanel Margin="0,12,0,0">
+              <CheckBox x:Name="StartWithWindowsCheck" Content="Start with Windows" IsEnabled="False" VerticalAlignment="Center" Margin="0,0,14,0" />
+              <Button x:Name="ApplyStartupButton" Content="Apply startup setting" Click="StartupApply_Click" IsEnabled="False" Padding="12,7" />
+            </WrapPanel>
+            <TextBlock x:Name="StartupRegistrationText" Text="Startup registration has not been inspected." Foreground="{StaticResource Muted}" FontSize="12" Margin="0,6,0,0" />
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource Card}">
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <StackPanel Margin="0,0,20,0">
+              <TextBlock Text="CURRENT CONTROL SOURCE" Style="{StaticResource Caption}" />
+              <TextBlock x:Name="ModeText" Text="Waiting for broker" FontSize="27" FontWeight="SemiBold" Margin="0,6,0,8" />
+              <TextBlock x:Name="StateText" Text="Starting the local control service…" Foreground="{StaticResource Muted}" />
+              <TextBlock x:Name="DetailText" Text="Checking real runtime evidence." Foreground="{StaticResource Muted}" Margin="0,8,0,0" />
+            </StackPanel>
+            <Grid Grid.Column="1" VerticalAlignment="Center">
+              <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+              <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+              <Button x:Name="PhysicalButton" Content="Physical VR" Click="Physical_Click" IsEnabled="False" Margin="0,0,5,10" MinHeight="58" />
+              <Button Grid.Column="1" x:Name="DesktopButton" Content="Desktop controls" Click="Desktop_Click" IsEnabled="False" Margin="5,0,0,10" MinHeight="58" />
+              <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="Switch controls · Ctrl + Alt + F10" Foreground="{StaticResource Muted}" FontSize="12" HorizontalAlignment="Center" />
+              <TextBlock Grid.Row="2" Grid.ColumnSpan="2" x:Name="HotkeyText" Text="Registering shortcuts…" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,8,0,0" />
+            </Grid>
+          </Grid>
+        </Border>
+        <Border Style="{StaticResource Card}" BorderBrush="#3C5C55">
+          <StackPanel>
+            <TextBlock Text="Play in the VRChat window" FontSize="19" FontWeight="SemiBold" />
+            <TextBlock Text="Choose Desktop controls, then click inside VRChat." FontSize="16" Margin="0,8,0,0" />
+            <TextBlock x:Name="GameCaptureText" Text="Waiting for the broker's input status." Foreground="{StaticResource Accent}" Margin="0,9,0,0" />
+            <TextBlock x:Name="GameGuideText" Text="Move the mouse to look · WASD to move · Shift to run · Space to jump" Foreground="{StaticResource Muted}" Margin="0,10,0,0" />
+            <TextBlock x:Name="GameMenuGuideText" Text="Esc: menu · C: crouch · Z: prone · hold right mouse: pointer" Foreground="{StaticResource Muted}" Margin="0,6,0,0" />
+            <TextBlock Text="Y: chat · Enter: send · Esc: cancel chat. Gameplay controls pause while typing." Foreground="{StaticResource Muted}" FontSize="12" Margin="0,8,0,0" />
+            <TextBlock Text="Alt-tab releases held actions. Ctrl + Alt + F12 releases controls; click inside VRChat to take control again." Foreground="{StaticResource Muted}" FontSize="12" Margin="0,8,0,0" />
+            <TextBlock Text="This panel is for switching and settings. Closing it hides it to the tray; the service keeps running." Foreground="{StaticResource Muted}" FontSize="12" Margin="0,10,0,0" />
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource Card}">
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <StackPanel Margin="0,0,16,0">
+              <TextBlock Text="RUNTIME" Style="{StaticResource Caption}" /><TextBlock x:Name="RuntimeText" Text="No driver heartbeat" Margin="0,5,0,15" />
+              <TextBlock Text="TRACKING" Style="{StaticResource Caption}" /><TextBlock x:Name="TrackingText" Text="Unknown" Margin="0,5,0,0" />
+            </StackPanel>
+            <StackPanel Grid.Column="1">
+              <TextBlock Text="DISPLAY" Style="{StaticResource Caption}" /><TextBlock x:Name="DisplayText" Text="Headset presentation unverified" Margin="0,5,0,15" />
+              <TextBlock Text="INPUT OWNERSHIP" Style="{StaticResource Caption}" /><TextBlock x:Name="InputText" Text="Released" Margin="0,5,0,0" />
+            </StackPanel>
+          </Grid>
+        </Border>
+        <Border Style="{StaticResource Card}">
+          <StackPanel>
+            <TextBlock Text="Desktop settings" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,12" />
+            <WrapPanel Margin="0,0,0,12">
+              <CheckBox x:Name="GameInputCheck" Content="Use mouse and keyboard in VRChat" VerticalAlignment="Center" Margin="0,0,16,8" IsEnabled="False" />
+              <Button x:Name="ApplyGameInputButton" Content="Apply game input settings" Click="GameInputApply_Click" IsEnabled="False" Padding="15,8" Margin="0,0,0,8" />
+            </WrapPanel>
+            <Expander x:Name="AdvancedPadExpander" Header="Advanced: panel control pad" Collapsed="AdvancedPad_Collapsed">
+              <StackPanel Margin="0,15,0,6">
+                <Grid Margin="0,0,0,13">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+              <StackPanel><TextBlock Text="Optional panel controls" FontSize="16" FontWeight="SemiBold" /><TextBlock x:Name="PadStatusText" Text="Released · click this pad to use the optional fallback" Foreground="{StaticResource Muted}" Margin="0,4,0,0" /></StackPanel>
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <RadioButton x:Name="HeadRadio" Content="Head look" IsChecked="True" Checked="ControlMode_Changed" Margin="12,0" />
+                <RadioButton x:Name="HandRadio" Content="Hand aim" Checked="ControlMode_Changed" Margin="0,0,2,0" />
+              </StackPanel>
+            </Grid>
+            <Border x:Name="InteractionPad" Background="#111D23" BorderBrush="#3C5C55" BorderThickness="1" CornerRadius="10" Height="155" Focusable="True" IsEnabled="False"
+                    MouseDown="Pad_MouseDown" MouseUp="Pad_MouseUp" MouseMove="Pad_MouseMove" LostMouseCapture="Pad_LostMouseCapture" AutomationProperties.Name="Desktop controls interaction pad">
+              <Grid IsHitTestVisible="False">
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="18">
+                  <TextBlock x:Name="PadTitleText" Text="CLICK TO ARM DESKTOP CONTROLS" Foreground="{StaticResource Accent}" FontWeight="Bold" HorizontalAlignment="Center" />
+                  <TextBlock x:Name="PadInstructionText" Text="Right-drag to look · WASD to move · Shift to run · Space to jump" HorizontalAlignment="Center" Margin="0,9,0,0" />
+                  <TextBlock Text="Left click: use · middle click: grab · Esc: release · switching windows releases inputs" Foreground="{StaticResource Muted}" FontSize="12" HorizontalAlignment="Center" Margin="0,8,0,0" />
+                </StackPanel>
+              </Grid>
+            </Border>
+            <WrapPanel Margin="0,14,0,0">
+              <Button x:Name="NeutralButton" Content="Neutral hands" Click="Neutral_Click" IsEnabled="False" Margin="0,0,8,8" />
+              <Button x:Name="ExtendedButton" Content="Rest hands" Visibility="Collapsed" Click="Extended_Click" IsEnabled="False" Margin="0,0,8,8" />
+              <Button x:Name="MenuPoseButton" Content="Menu hand position" Click="MenuPose_Click" IsEnabled="False" Margin="0,0,8,8" />
+              <Button x:Name="MenuButton" Content="Send menu button pulse" Click="Menu_Click" Focusable="False" IsEnabled="False" Margin="0,0,0,8" />
+            </WrapPanel>
+              </StackPanel>
+            </Expander>
+            <Grid Margin="0,9,0,0">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /><ColumnDefinition Width="100" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+              <TextBlock Text="Desktop height offset" VerticalAlignment="Center" />
+              <Slider x:Name="HeightSlider" Grid.Column="1" Minimum="-1.5" Maximum="1.5" Value="0" TickFrequency="0.05" IsSnapToTickEnabled="True" ValueChanged="Height_Changed" IsEnabled="False" VerticalAlignment="Center" Margin="8,0,14,0" AutomationProperties.Name="Desktop height offset in meters" />
+              <TextBlock x:Name="HeightText" Grid.Column="2" Text="0.00 m" HorizontalAlignment="Center" VerticalAlignment="Center" />
+              <Button x:Name="ResetHeightButton" Grid.Column="3" Content="Reset" Click="HeightReset_Click" IsEnabled="False" Padding="12,7" />
+            </Grid>
+            <WrapPanel Margin="0,17,0,0">
+              <TextBlock Text="Mouse sensitivity" Width="160" VerticalAlignment="Center" />
+              <Slider x:Name="SensitivitySlider" Minimum="0.1" Maximum="5" Value="1" TickFrequency="0.05" IsSnapToTickEnabled="True" Width="200" ValueChanged="Sensitivity_Changed" VerticalAlignment="Center" Margin="8,0,14,0" AutomationProperties.Name="Mouse sensitivity multiplier" />
+              <TextBlock x:Name="SensitivityText" Text="1.00×" Width="70" VerticalAlignment="Center" />
+              <TextBlock Text="1× is the default · use Apply above to save" Foreground="{StaticResource Muted}" FontSize="12" VerticalAlignment="Center" />
+            </WrapPanel>
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource Card}">
+          <StackPanel>
+            <TextBlock Text="VRChat input adapter" FontSize="19" FontWeight="SemiBold" />
+            <TextBlock Text="Optional OSC locomotion and actions. Enable OSC in VRChat first. Your existing OSC tools can keep their own channels; avoid another sender for these input actions." Foreground="{StaticResource Muted}" Margin="0,7,0,14" />
+            <WrapPanel>
+              <CheckBox x:Name="OscCheck" Content="Send VRChat OSC input" VerticalAlignment="Center" Margin="0,0,18,10" IsEnabled="False" />
+              <TextBlock Text="Loopback destination" VerticalAlignment="Center" Margin="0,0,8,10" />
+              <TextBox x:Name="OscHost" Text="127.0.0.1" Width="130" Margin="0,0,10,10" AutomationProperties.Name="OSC numeric loopback destination" />
+              <TextBlock Text="Port" VerticalAlignment="Center" Margin="0,0,8,10" />
+              <TextBox x:Name="OscPort" Text="9000" Width="75" Margin="0,0,10,10" AutomationProperties.Name="OSC destination port" />
+              <Button x:Name="ApplyOscButton" Content="Apply" Click="OscApply_Click" IsEnabled="False" Padding="15,8" Margin="0,0,0,10" />
+            </WrapPanel>
+            <TextBlock x:Name="OscStatusText" Text="OSC input is disabled by default." Foreground="{StaticResource Muted}" FontSize="12" />
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource Card}" BorderBrush="#725A38">
+          <StackPanel>
+            <TextBlock Text="Start in any order" FontSize="19" FontWeight="SemiBold" />
+            <TextBlock x:Name="StartupNextText" Text="Launch Switcheroonie whenever you need it. Readiness updates automatically without resetting your selected mode." Margin="0,8,0,0" />
+            <TextBlock Text="HEADSET-FREE VR DISPLAY" Style="{StaticResource Caption}" Margin="0,16,0,0" />
+            <TextBlock x:Name="ColdStartText" Text="Development target: a VR display route that can start without the physical headset." Margin="0,6,0,0" />
+            <TextBlock Text="A running background service is separate from a usable headset-free VR session. The current display route uses the existing vendor connection; headset-free VRChat continuity needs its own backend and verification." Foreground="{StaticResource Muted}" Margin="0,7,0,0" />
+            <TextBlock Text="The current backend needs VRChat to start in VR; an existing non-VR session cannot acquire VR through Switcheroonie." Foreground="{StaticResource Muted}" Margin="0,7,0,0" />
+            <TextBlock x:Name="EvidenceText" Text="Hardware validation pending" Foreground="#F5CEA0" Margin="0,9,0,0" />
+            <WrapPanel Margin="0,13,0,0">
+              <Button Content="Check readiness" Click="Readiness_Click" Padding="12,7" Margin="0,0,10,0" />
+              <Button Content="Setup &amp; recovery guidance" Click="SetupHelp_Click" Padding="12,7" />
+            </WrapPanel>
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource Card}">
+          <Expander x:Name="HelpExpander" Header="Help, recovery &amp; live diagnostics">
+            <StackPanel Margin="0,15,0,0">
+              <TextBlock Text="Switcheroonie may be launched before or after your usual VR software. The service monitors readiness while the panel stays in the tray. When the current VR route reports fresh tracking, use Automatic to follow reported headset use, or choose Desktop / Physical explicitly. A manual selection is retained until you resume Automatic." />
+              <TextBlock Text="Esc opens and closes the menu. Hold right mouse to aim the interaction pointer. C crouches; Z goes prone. Alt-tab releases inputs. Ctrl + Alt + F12 releases controls until you click the game again." Foreground="{StaticResource Muted}" Margin="0,10,0,0" />
+              <TextBlock Text="Y opens chat and pauses gameplay controls. Enter sends; Esc cancels chat. Release held movement keys before resuming. If you released or switched windows during chat, cancel or send the chat before clicking the game to take control again." Foreground="{StaticResource Muted}" Margin="0,10,0,0" />
+              <TextBlock Text="Settings are saved automatically. Game controls continue when this panel is minimized or closed." Foreground="{StaticResource Muted}" Margin="0,10,0,0" />
+              <TextBlock Text="X and Hide to tray keep the panel resident. Reopen from the tray or launch the portable panel again. --background starts the panel without showing it. Exit panel in the tray leaves the service running. Start with Windows is an explicit, reversible choice for this account; it starts quietly at sign-in. Disable it before relocating the portable folder." Foreground="{StaticResource Muted}" Margin="0,10,0,0" />
+              <TextBlock Text="If controls feel wrong: release all inputs first. To recover outside this panel, use Switcheroonie.Cli.exe release, then Switcheroonie.Cli.exe physical. No mode switch should restart SteamVR or VRChat. If the driver has no heartbeat, inspect installation and runtime logs during a safe test window." Foreground="{StaticResource Muted}" Margin="0,10,0,0" />
+              <TextBlock x:Name="DiagnosticText" FontFamily="Consolas" FontSize="12" Foreground="{StaticResource Muted}" Margin="0,16,0,0" />
+              <Button Content="Save diagnostic report" Click="SaveReport_Click" HorizontalAlignment="Left" Margin="0,13,0,0" />
+            </StackPanel>
+          </Expander>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+    <Border Grid.Row="2" Padding="0,14,0,0">
+      <TextBlock x:Name="MessageText" Text="Experimental build · hardware and session continuity require physical validation." Foreground="{StaticResource Muted}" FontSize="12" />
+    </Border>
+  </Grid>
+</Window>
+

@@ -1,0 +1,8 @@
+@echo off
+set "SWITCHEROONIE_PACKAGE=%~dp0dist\VRC-SWITCHEROONIE-0.2.0-final"
+if not exist "%SWITCHEROONIE_PACKAGE%\VRC-SWITCHEROONIE.exe" set "SWITCHEROONIE_PACKAGE=%~dp0dist\VRC-SWITCHEROONIE-0.2.0"
+if not exist "%SWITCHEROONIE_PACKAGE%\VRC-SWITCHEROONIE.exe" (
+  echo Build the portable package with tools\Build.ps1 first.
+  exit /b 1
+)
+start "" "%SWITCHEROONIE_PACKAGE%\VRC-SWITCHEROONIE.exe" --launch

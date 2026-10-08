@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Switcheroonie.Broker/Switcheroonie.Broker.csproj" />
+    <Project Path="src/Switcheroonie.Cli/Switcheroonie.Cli.csproj" />
+    <Project Path="src/Switcheroonie.Common/Switcheroonie.Common.csproj" />
+    <Project Path="src/Switcheroonie.Update/Switcheroonie.Update.csproj" />
+  </Folder>
+  <Folder Name="/panel/">
+    <Project Path="research/compact-ui/CompactUi.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/IntegrationHarness/IntegrationHarness.csproj" />
+    <Project Path="tests/Switcheroonie.Tests/Switcheroonie.Tests.csproj" />
+    <Project Path="tests/Switcheroonie.Update.Tests/Switcheroonie.Update.Tests.csproj" />
+  </Folder>
+</Solution>

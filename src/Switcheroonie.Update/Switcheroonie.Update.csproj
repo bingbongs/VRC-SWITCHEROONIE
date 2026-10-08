@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework><ApplicationManifest>app.manifest</ApplicationManifest>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <AssemblyName>Switcheroonie.Updater</AssemblyName><Version>0.2.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Switcheroonie.Common/Switcheroonie.Common.csproj" />
+    <EmbeddedResource Include="../../release/release-public-key.txt" LogicalName="Switcheroonie.ReleasePublicKey" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,66 @@
+# Headset-free startup with later Virtual Desktop attachment
+
+The initial candidate used **one persistent logical HMD with the installed Virtual Desktop display shim**, implemented separately in `research/persistent-hmd`. Its absent-client late-attachment and connected-start display trials both failed actual headset delivery and were rolled back. It is unregistered and excluded from the normal application build. The next recommendation is to qualify a normal-graphics public VDXR source/display session before building an owned OpenVR-to-OpenXR display bridge. See `openxr-display-bridge-design.md` and `../research/vd-graphics-probe/README.md`; that probe is offline-validated only.
+
+## Current evidence
+
+Initial read-only inspection on 2026-10-07 observed VRChat PID 26180 and vrserver PID 9484; these are historical identities, not current process claims. The inspected `OpenVRDriver/driver.vrdrivermanifest` declared VirtualDesktop `alwaysActivate=true`, `redirectsDisplay=true`, and presence `*.*`, with default priority 1000. Its then-loaded DLL SHA-256 was `AD3C99C7F7346613D4C7106FB94476BE5859CA17A637A11CFC156184D466F36F`; file version 1.16.0.0 was distinct from Streamer application 1.34.22.
+
+That historical vrserver log recorded VD's `TrackedDeviceAdded` hook and `CHMDShimDriver` wrapping a new HMD. It advertised public `IVRDisplayComponent_003` / `IVRVirtualDisplay_002` plus a compositor plugin and private IPC resource interface. This supported an initial wrapping hypothesis; the later trials did not establish usable delivery for our HMD. A module-name filter found no matching vendor compositor names during both failure and successful ordinary VD recovery, so it is not proof that the plugin or transport was absent.
+
+Valve's pinned SDK commit `0924064316de3effbcd1acf1e309182a2deb1c05` defines a DisplayRedirect receiving the compositor's shared backbuffer and owning presentation timing. It also limits HMD admission when another HMD already exists. A DisplayRedirect alone supplies no HMD tracking/identity. Therefore this design retains one HMD rather than adding a second on connection. [Pinned driver API](https://github.com/ValveSoftware/openvr/blob/0924064316de3effbcd1acf1e309182a2deb1c05/docs/Driver_API_Documentation.md), [Valve's display sample](https://github.com/ValveSoftware/virtual_display).
+
+No supported third-party frame-attachment API was found in the inspected VD installation or official product/source pages. VDXR's published source uses a vendor LibOVR session and library-path override; this is not a supported SteamVR display attachment contract and is not used by this prototype. [VDXR source](https://github.com/mbucchia/VirtualDesktop-OpenXR/blob/main/virtualdesktop-openxr/system.cpp).
+
+## Implemented prototype and exact interfaces
+
+The separate driver defaults to `driver_switcheroonie_persistent.enable=false`. Explicit enablement admits one serial `switcheroonie-persistent-research-v1`, refuses an existing connected HMD, and obeys the runtime's final rejection. It does not install, enable, restart, patch, inject into, or launch anything. Its manifest must remain unregistered: presence `*.*` itself changes headset detection even when device enablement is false.
+
+| Component | Implementation / integration boundary |
+| --- | --- |
+| `IServerTrackedDeviceProvider` | Persistent object lifetime; one HMD registration; pose publication; no mode-driven removal or replacement. Default load priority 100 puts it after installed VD's 1000 so VD can install its observed shim first. Ordering remains to be verified in runtime logs. |
+| `ITrackedDeviceServerDriver` | Fixed synthetic identity/tracking system, valid stable 1.6 m pose, bounded diagnostics declaring `physicalReady=false`. The synthetic source must never satisfy physical-head readiness. |
+| `IVRDisplayComponent_003` | Desktop fictional display, 2160×1200 framebuffer, separate eye viewports, 1512×1680 render target per eye, symmetric projection, identity distortion. These are explicit placeholders rather than Swan optics. |
+| HMD properties / host | Hardware DXGI adapter LUID, 90 Hz frequency, 64 mm IPD, explicit left/right eye-to-head transforms, unique universe, display capability flags. VD's actual eye geometry, refresh, GPU, and timing ownership must be observed after wrapping. |
+| Existing VD transport | Our driver exposes no competing `IVRVirtualDisplay` and makes no private vendor calls. The unmodified vendor shim/display redirect must supply real streaming. Whether it preserves an absent-client display and can attach later is the experiment. |
+| Session supervisor | Monitor runtime identity, active display owner, actual target-process XR startup, source provenance, and frame/transport readiness. Retry attachment after runtime changes; release inputs on source loss; never relaunch VRChat to claim continuity. |
+
+The public component follows Valve's fictional HMD example; a nonzero refresh and explicit display contract avoid treating HMD presence alone as a working render pipeline. [Pinned HMD sample](https://github.com/ValveSoftware/openvr/blob/0924064316de3effbcd1acf1e309182a2deb1c05/samples/drivers/drivers/simplehmd/src/hmd_device_driver.cpp).
+
+## Prototype-to-product sequence
+
+1. In an authorized stopped-runtime window, journal/register only the owned research driver and its explicit enable setting. Start SteamVR with VD already installed/running but the headset absent. Record admission, activation, VD shim decision, display owner, adapter, projections, clock, and stable scene PID. Run the existing controlled stereo scene first.
+2. Verify advancing frames and both Submit results while absent, then connect VD without stopping the scene/runtime. Require changing content in both headset eyes, correct eye ordering/optics, and fresh physical head/controller samples from VD. An advancing synthetic pose heartbeat does not pass this step. If VD substitutes its pose, correlate deliberately performed physical motion with independently captured vendor source and client pose; merely seeing a VD caller or wrapper is insufficient.
+3. Repeat absent → connected → absent → reconnect. Preserve the same HMD identity, scene PID/start time, runtime session and render progression. Measure display changes, timing, tracker/calibration fingerprints and controller bindings. Neutralize acquired inputs on loss while retaining synthetic desktop rendering.
+4. Only after that passes, integrate the supervisor and existing desktop controls, then repeat in one VRChat process and instance. Distinguish process/session continuity from restarting the application with the same account.
+5. If VD rejects this HMD or cannot preserve the absent-client display, retain the measured failure and implement a source-owned transport such as a separately pinned ALVR server/client with persistent HMD lifetime. That is a concrete alternative backend, not VD certification. A custom `IVRVirtualDisplay` sink can prove frame delivery to an owned receiver, but does not feed a closed vendor streamer automatically.
+
+VRChat must initialize a VR render session against the persistent HMD at launch; its `--no-vr` route intentionally starts desktop. Converting an already running native desktop VRChat instance into XR is a separate unverified application lifecycle requirement; this prototype claims no such conversion. [VRChat launch options](https://docs.vrchat.com/docs/launch-options).
+
+PICO's current primary documentation names Project Swan/OS 6 and OpenXR support. VD's current supported-headset list names Pico Neo 3 / 4 / 4 Ultra, not Swan. OS-level OpenXR support does not prove VD PCVR compatibility; test the actual Swan client/firmware before claiming it. [PICO developer resources](https://developer.picoxr.com/resources/?platform=unity), [Virtual Desktop supported headsets](https://www.vrdesktop.net/).
+
+### Measured persistent-HMD trial failures
+
+Absent startup admitted one synthetic HMD and kept the controlled scene submitting both eyes with result 0. VD initialization reported no connected headset, and later connection could not enter VR. This is a failed attachment test, not a headset-free VRChat pass. [Late-attachment result](../reports/persistent-hmd-absent-late-attachment-result.json).
+
+Connected startup loaded VD's server driver, but the user saw only the VD desktop with Headset Error(-202). The synthetic HMD used its placeholder desktop/debug display; accepted submissions did not establish headset presentation. [Connected-start result](../reports/persistent-hmd-connected-result.json). The research registration and original driver registration set were restored. [Rollback](../reports/persistent-hmd-trial-rollback.json). Ordinary VD later recovered both-eye display. No VRChat cold-start or same-session attachment test passed.
+
+## Independent physical source: isolated public OpenXR probe
+
+`research/vd-headless-probe` implements a separate public OpenXR client using `XR_MND_headless` and QPC-to-XrTime conversion. Simulated checks validate session-free inspection, graphics-free session creation, bounded sampling, cleanup and provenance. Help and file-pin validation load no vendor code. Actual enumeration and deliberate motion testing ran; independent physical-source qualification failed as recorded below. It is not an integrated backend.
+
+Khronos permits a headless session without graphics or frame submission. Its focused state has input meaning and does not establish that the headset is worn. This gives us a concrete way to query a source separate from the persistent HMD's synthetic output; a query's XrTime is not a sensor-acquisition timestamp. [Public headless contract](https://github.com/KhronosGroup/OpenXR-Docs/blob/main/specification/sources/chapters/extensions/mnd/mnd_headless.adoc).
+
+VDXR's public implementation advertises headless only when built with invisible-mode support, uses invisible vendor initialization for that extension, and still creates a vendor session and marks it `IsVDXR=true`. The installed reviewed VDXR binary contains the extension marker, but a live loader enumeration must establish availability. Whether those vendor operations preserve or take over VD's existing SteamVR display transport is an explicit coexistence test. [VDXR source](https://github.com/mbucchia/VirtualDesktop-OpenXR/blob/1a83fec8b5c565b14b06ffa8e1eb7e4768057573/virtualdesktop-openxr/system.cpp).
+
+The proposed additive contract must separate `DisplayReady` from `PhysicalSourceReady`. The logical HMD retains its synthetic identity and display generation even while no headset exists. A separate source packet would carry source kind, session generation, helper receipt/QPC timestamp, requested XrTime, reference-space generation, tracked/valid flags and independent head/controller/action values. A routing mode then chooses that physical packet or owned desktop output, with stale helper data releasing inputs. Never derive source freshness from the logical HMD's heartbeat or feed its pose back into physical capture. One LOCAL-to-owned-world alignment is required; reattach/recenter invalidates that alignment rather than applying two transforms.
+
+The existing main driver correctly excludes the research synthetic identity from physical discovery and currently requires fresh physical head tracking for desktop acknowledgment. Therefore neither research prototype currently receives main Broker desktop controls. A separate logical-display-ready acknowledgment and synthetic output request interface are still needed for an absent-headset controlled scene. No main protocol/engine change was made by this research work. The [probe README](../research/vd-headless-probe/README.md) records the concrete coexistence sequence and stop conditions before that integration.
+
+### Measured headless source failure, 2026-10-07
+
+Live enumeration exposed31 extensions, including headless and QPC time conversion. A five-second graphics-free session and a later ten-second deliberate motion test exited normally. The same SteamVR PID62780 and controlled-scene PID38744 continued; all observed eye submissions returned0. The user confirmed the scene remained normal.
+
+The independent source test failed: 299 headless samples reported tracking flags 15 but had exactly one pose, identity orientation and position (0,-1.3362,0), with every controller action inactive. During the same interval, the ordinary pre-routing vendor head changed across 38 poses, with position spans of approximately 0.093 m, 0.036 m and 0.089 m. API flags and FOCUSED state did not establish physical tracking or worn presence. `reports/vd-headless-motion-result.json` preserves the result; raw captures remain unchanged. This source must not drive Physical mode.
+
+The subsequent public invisible LibOVR diagnostic also failed qualification: 150 samples had zero head sensor time/tracking flags, one identity pose and no controllers, despite successful API calls and mounted/visible/focused status. See `../reports/vd-public-libovr-result.json`. Limited coexistence observation does not turn either source into a viable tracking backend. The normal-graphics probe must next demonstrate actual changing head/controller poses under deliberate motion and both-eye delivery; the display bridge remains unimplemented.

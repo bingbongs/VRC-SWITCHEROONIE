@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "application": "VRChat",
+  "runtime": "SteamVR",
+  "targetProcess": "VRChat",
+  "inputOwnership": "fresh-click-foreground-vrchat-window; optional HWND-scoped Advanced pad",
+  "desktopInput": {"mouse": "relative head look; client-bound right-hand aim in menu or while right mouse is held", "menu": "Esc toggles Quick Menu; Tab untouched", "use": "left click or held trigger drag", "grab": "middle mouse only; right mouse pointer sends no Grip", "chat": "Y opens, Enter sends while typing, Esc cancels while typing", "release": "Ctrl+Alt+F12"},
+  "locomotion": {"forward": "W", "back": "S", "left": "A", "right": "D", "run": "Shift", "jump": "Space", "crouch": "hold C", "prone": "hold Z; takes precedence over C"},
+  "controllerMapping": {
+    "move": "left joystick/thumbstick position",
+    "jump": "right a click",
+    "run": "left joystick/thumbstick click; app binding dependent",
+    "menu": "one verified Boolean click: left y, left b, right b, left application_menu in preference order",
+    "use": "right trigger",
+    "grab": "controller grip/squeeze",
+    "system": "neutral in desktop mode; never synthesize dashboard button"
+  },
+  "optionalOsc": {"enabledByDefault": false, "host": "127.0.0.1", "port": 9000, "addresses": ["/input/Vertical", "/input/Horizontal", "/input/Jump", "/input/Run"]},
+  "handPresets": ["rest (legacy preset 0/1)", "right pointer (legacy preset 2)"],
+  "limitations": [
+    "Profile declares shipped mappings; actual bindings must be validated on the active controller.",
+    "Menu and right-held pointer use relative mouse hand aim; pixel-perfect mirror clicking is unavailable.",
+    "Installed default Touch bindings map left Y/right B clicks to Quick Menu and separate their touch gesture actions; stored bindings do not prove the current app binding.",
+    "VRChat must already use SteamVR VR rendering; native desktop sessions cannot be converted.",
+    "Persistent-HMD Virtual Desktop late-attachment and connected-start display trials failed and were rolled back; headset-free startup remains unimplemented.",
+    "FBT calibration, face/eye channels and physical menu usability have no hardware evidence yet."
+  ],
+  "evidence": "Controlled-scene headset tests passed; original menu closure and later VRChat cursor/hands/menu/posture F3 failed. Replacement controls are software-tested and await live retest; public model components do not prove VRChat's consumed pointer component."
+}

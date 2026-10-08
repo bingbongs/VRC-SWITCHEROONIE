@@ -1,0 +1,6 @@
+{
+  "name": "switcheroonie",
+  "resourceOnly": false,
+  "alwaysActivate": true,
+  "hmd_presence": []
+}

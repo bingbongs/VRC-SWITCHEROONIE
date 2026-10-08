@@ -1,0 +1,20 @@
+# Privacy and preservation
+
+Discovery is read-only. Reports redact usernames, serials, account/session identifiers and network addresses. They retain version strings, hashes and whitelisted controller binding action paths. No private conversations or raw typed input are collected.
+
+Desktop input requires acknowledged fresh desktop routing and the foreground VRChat window in the current Windows session. A fresh mouse click acquires controls; unrelated windows, focus loss, observed chat entry and emergency release neutralize them. A hidden Raw Input receiver buffers relative mouse movement only in that eligible game scope. A keyboard hook handles only menu/chat/emergency, posture and enabled numpad control keys in that scope, and passes unrelated input onward. Movement polling reads only the configured movement and posture controls; enabled numpad controls use scoped key edges. No typed text or raw input stream is logged. The optional Advanced pad uses its own foreground window and 200ms lease. Its deactivation cannot release the game owner. The mapping/pipe is restricted to the current user's SID; there is no network control listener.
+
+Look mode uses a one-pixel center lock and an app-owned non-activating surface to hide the cursor. Pointer/menu mode confines it to the validated game client and shows it. Chat, focus loss, source changes and emergency release restore the prior boundary only if it still matches the owned clip. An independent helper expires cursor ownership if the broker stops responding. Arbitrary text fields inside the VR game cannot be identified through Windows controls; menu mode suppresses movement, and Enter/Y chat handling is a convenience rather than a full game-state detector.
+
+The optional OSC sender uses a numeric local loopback destination and transmits only movement/jump/run input addresses. It never owns VRChat's receiving port and does not modify avatar parameter files. UDP release has the documented all-senders-loss limit.
+
+The installer uses an owned per-user directory and journal. It does not rewrite OpenXR defaults, audio selection, third-party tracker identities, chaperone floor, vendor drivers, Steam launch options or controller bindings. Rollback compares the harness's last write and reports conflicting edits. No mode change starts/stops a runtime, streamer or application.
+
+The panel can remain quietly in the tray and restart its broker after a crash with bounded backoff. Its explicit Start with Windows setting owns only the current account's `Run/VRC-SWITCHEROONIE` startup value for the exact stable portable launcher plus `--launch --background` (or the legacy exact UI path when no launcher is present); conflicting entries are preserved. Automatic routing stores only enabled/manual preference and reads independent vendor proximity/pose age. It neither treats synthetic awake output as headset wear nor arms desktop controls on a wear event.
+
+The isolated Virtual Desktop OpenXR research probe selects its pinned vendor runtime and disables implicit layers in its own process only, leaving Windows/global OpenXR registration unchanged. Its default probe and explicit tracking-only session are separate operations; real coexistence and display attachment require controlled testing. It does not read VRChat memory, typed text or world/session data.
+
+
+speeeeeeen saves one enabled preference. Its active state and velocities are not saved. Rotation is scoped to the foreground VRChat window in VR and Desktop, expires on stale tracking and stops for typing/focus loss/emergency release. The same transform is applied to eligible tracked devices; original source poses and calibration are retained.
+
+Automatic update checks contact the public GitHub repository and release-asset hosts. They download signed manifests and portable archives and send no world, chat, avatar, headset serial or local diagnostic data. Signing credentials are never included in the app or repository. Local deployment/test journals are excluded from public source and downloadable packages.

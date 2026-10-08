@@ -1,0 +1,23 @@
+# Compatibility and evidence
+
+Connected switching remains **experimental**. The PICO Swan / Virtual Desktop route passed controlled-scene stereo presentation and 25 cycles, then failed a separate deliberate headset-movement test. The corrected build passed another 25 automated cycles and human checks for held-view stability, mouse look and physical return. The later actual VRChat F3 failed hands, cursor confinement, menu semantics and missing posture controls. The replacement controls candidate has software evidence and awaits its own live retest.
+
+| Route | Installed/discovered evidence | A/B connected switching | C absent at launch, attach later | D stream recovery | E change transport | Menus / FBT |
+|---|---|---|---|---|---|---|
+| PICO Swan + Virtual Desktop SteamVR | User identifies Swan; live vendor head/controllers valid; runtime exposes Quest2 compatibility/controller render models, not proof of Quest hardware; observed vendor driver 1.64.0 and Streamer 1.34.22.0 | Corrected build passed controlled-scene cycles and human held view / mouse look / physical return; later VRChat F3 failed; replacement candidate unverified live | Persistent-HMD late attachment and connected-start display failed; rolled back; unsupported | Untested | Untested | Closure failed in original workflow; later cursor/hands/menu/posture failed; replacement awaiting retest / FBT untested |
+| PICO Swan + PICO Connect | Earlier live provider reported PICO4S and tracked Pico Hands; Connect 10.6.6, TMP 20.5.5, service 2.5.4.1 | Untested; user chose Virtual Desktop first | Unimplemented | Untested | Untested | Untested |
+| PICO 4 Enterprise / other PICO + PCVR | Installation discovery does not establish the physical model or Enterprise route | Untested | Unimplemented | Untested | Untested | Untested |
+| Quest / other HMD + Virtual Desktop SteamVR | Provider compatibility model is not proof of physical Quest hardware | Untested | Unimplemented | Untested | Untested | Untested |
+| Steam Link VR | `vrlink` driver installed, active route unverified | Untested | Unimplemented | Untested | Untested | Untested |
+| Index/native wired | Valve drivers installed; device availability unverified | Untested | Unimplemented | Untested | Untested | Untested |
+| Other wired HMD/PSVR2 | No live provider/device evidence | Untested | Unimplemented | Untested | Untested | Untested |
+| Direct VDXR / other native OpenXR | 32-bit VDXR registry entry observed; current VRChat no-XR | Outside SteamVR backend | Outside backend | Outside backend | Outside backend | Outside backend |
+| Standalone Android VRChat | Outside Windows runtime scope | Outside backend | Outside backend | Outside backend | Outside backend | Outside backend |
+
+SteamVR installation build `25330290` is gated in this experimental binary. Software simulation establishes routing logic on a fake host; it does not establish compatibility with any physical provider on that build. Store exact runtime/application/headset/firmware/transport/controller/GPU/add-on versions with every future hardware result.
+
+The existing application monitor is the viewer. Correct physical eye presentation, projection, tracking latency and display-owner continuity must be verified in the HMD. The panel deliberately leaves display readiness unverified rather than inferring it from a pose heartbeat.
+
+Live setup on 2026-10-07: early SteamVR starts skipped the owned LocalAppData directory even though the same user's Win32 directory checks succeeded. An owned installation outside AppData/OneDrive, with the optional manifest directory field omitted and owned load-priority setting added, loaded successfully; which change resolved discovery is unproven. No ACLs were widened. The exact approved SpaceCalibrator path now routes after independent physical calibration capture, with live pose and component evidence; FBT calibration behavior remains untested. Controlled-scene texture submission error 106 was repaired, then the separate anchor timing race was repaired and retested. Original failures remain preserved. The old desktop VRChat process ended during setup; later starts are not continuity evidence. The actual VRChat F3 failure is recorded in `reports/vrchat-481-human-failure.json`.
+
+The persistent-HMD trials reached synthetic scene submission but failed actual Virtual Desktop headset delivery. See `reports/persistent-hmd-absent-late-attachment-result.json`, `reports/persistent-hmd-connected-result.json`, and `reports/persistent-hmd-trial-rollback.json`. Headless OpenXR and invisible LibOVR also failed physical-source qualification. The optional normal-graphics OpenXR probe is built and tested offline; it has not established a live source or headset-free session.

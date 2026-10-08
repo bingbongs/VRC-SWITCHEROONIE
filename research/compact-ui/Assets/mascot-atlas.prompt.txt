@@ -1,0 +1,3 @@
+Built-in imagegen edit of user reference codex-clipboard-e21526b8-3c9d-4236-88fc-68309a030b7d.png, transparent_background=true.
+Create the reference little grey, gold-masked, black-caped pixel superhero as six consistent poses in a 3-column by 2-row transparent atlas. Read order: idle, run right, head bonk, flip, thumbs-up, silly cartoon self-munch. Equal 512-by-512 cells on a 1536-by-1024 canvas, centered silhouettes, no text or UI. Preserve grey round body, short black spiky hair, gold mask, boots and belt, white eyes and two-tooth smile; readable at 64px.
+Generated 2026-10-07. Original retained under Codex generated_images. Verified 1536x1024, 32bpp ARGB, transparent corner and inter-cell gap.
