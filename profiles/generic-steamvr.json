@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "application": "Generic SteamVR",
+  "runtime": "SteamVR",
+  "inputOwnership": "explicit-foreground-pad",
+  "inputTransport": "existing physical controller components",
+  "locomotion": "left joystick/thumbstick axes via existing application bindings",
+  "interaction": "right trigger; grip; menu application_menu/y/b where available",
+  "bindings": "No binding rewrite; application may require a different mapping.",
+  "handPresets": ["neutral", "extended", "menu"],
+  "limitations": ["No VRChat OSC addresses in this profile", "App-specific actions are not universally equivalent", "No verified generic application or physical headset evidence yet"],
+  "evidence": "Native isolated host only"
+}

@@ -1,0 +1,16 @@
+{
+  "experimental": true,
+  "name": "01spacecalibrator",
+  "observedDriverLogVersion": "1.5",
+  "sha256": "17b8510ee9cfc3cd017deb5a40ab6ef2ac5e5e1412f0f00038788fa6b0898314",
+  "locationRelativeToSteamVRParent": "01spacecalibrator/bin/win64/driver_01spacecalibrator.dll",
+  "reviewedSourceComparison": {
+    "repository": "https://github.com/hyblocker/OpenVR-SpaceCalibrator",
+    "reference": "v1.5.1",
+    "files": ["src/driver/InterfaceHookInjector.cpp", "src/driver/ServerTrackedDeviceProvider.cpp", "src/driver/Hooking.h", "src/driver/Hooking.cpp"],
+    "binaryReproducibleBuildVerified": false
+  },
+  "approvalBasis": "Exact locally observed binary hash and bounded runtime detour/trampoline/lifecycle validation; source comparison describes behavior and is not proof that this binary was reproducibly built from that source",
+  "rawFeedBoundary": "Owned routing occurs inside the approved original pose trampoline after foreign raw shared-memory capture and calibration",
+  "lifecycle": "Full foreign pose body counted through a raw passthrough guard; foreign Cleanup gates new calls, drains, removes inner owned hook, calls foreign Cleanup, and retains a stopped outer gate until process exit"
+}

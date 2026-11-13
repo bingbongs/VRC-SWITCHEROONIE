@@ -1,0 +1,5 @@
+{
+  "driver_switcheroonie": {
+    "loadPriority": 20000
+  }
+}
